@@ -637,12 +637,14 @@ class _DesktopTabState extends State<DesktopTab>
       alignment: Alignment.centerLeft,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
+        // The same background as the tab bar, unless this pane holds the
+        // selected tab.
         color: isSelected
             ? tabbar.selectedTabBackgroundColor
-            : tabbar.unSelectedTabBackgroundColor,
+            : Theme.of(context).colorScheme.background,
         border: Border(
           bottom: BorderSide(
-            color: tabbar.dividerColor,
+            color: tabbar.dividerColor ?? Colors.transparent,
             width: _kSplitDividerWidth,
           ),
         ),
