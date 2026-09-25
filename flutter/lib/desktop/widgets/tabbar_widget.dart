@@ -27,7 +27,6 @@ const double _kIconSize = 18;
 const double _kDividerIndent = 10;
 const double _kActionIconSize = 12;
 const double _kSplitDividerWidth = 1;
-const double _kTabPaneHeaderHeight = _kTabBarHeight;
 
 class TabInfo {
   final String key; // Notice: cm use client_id.toString() as key
@@ -611,8 +610,7 @@ class _DesktopTabState extends State<DesktopTab>
       children.add(Expanded(
         child: Column(
           children: [
-            if (_showPaneHeader)
-              _buildTabHeader(tabs[i], i == state.value.selected),
+            _buildPaneTabRow(tabs[i]),
             Expanded(child: _tabPane(tabs[i])),
           ],
         ),
@@ -621,45 +619,42 @@ class _DesktopTabState extends State<DesktopTab>
     return _wrapCanvas(Row(children: children));
   }
 
-  /// The pane headers label the panes, so they are only needed while the tab
-  /// bar is shown.
-  bool get _showPaneHeader =>
-      stateGlobal.showTabBar.value && !kUseCompatibleUiMode;
+  /// Whether the tabs are shown by the panes of the split view instead of by
+  /// the tab bar.
+  bool get _tabsInPanes => state.value.split && state.value.tabs.length > 1;
 
-  /// The header of a pane of the split view, which shows the label of the tab
-  /// displayed in the pane.
-  Widget _buildTabHeader(TabInfo tab, bool isSelected) {
-    final tabbar = MyTheme.tabbar(context);
-    final label =
-        labelGetter == null ? Rx<String>(tab.label) : labelGetter!(tab.label);
-    return Container(
-      height: _kTabPaneHeaderHeight,
-      alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(
-        // The same background as the tab bar, unless this pane holds the
-        // selected tab.
-        color: isSelected
-            ? tabbar.selectedTabBackgroundColor
-            : Theme.of(context).colorScheme.background,
-        border: Border(
-          bottom: BorderSide(
-            color: tabbar.dividerColor ?? Colors.transparent,
-            width: _kSplitDividerWidth,
+  /// The row above a pane of the split view, which shows the tab of the pane.
+  ///
+  /// Dragging it moves the window, like the tab bar.
+  Widget _buildPaneTabRow(TabInfo tab) {
+    final showBottomDivider = _showTabBarBottomDivider(tabType);
+    return GestureDetector(
+      onPanStart: (_) => startDragging(isMainWindow),
+      // A Material is used to paint the background of the row, so that the tab
+      // can still ink its hover and click effects on it.
+      child: Material(
+        color: Theme.of(context).colorScheme.background,
+        child: Column(children: [
+          SizedBox(
+            height: showBottomDivider ? _kTabBarHeight - 1 : _kTabBarHeight,
+            child: Row(children: [
+              _ListView(
+                controller: controller,
+                invisibleTabKeys: invisibleTabKeys,
+                onlyTabKeys: [tab.key],
+                tabBuilder: tabBuilder,
+                tabMenuBuilder: tabMenuBuilder,
+                labelGetter: labelGetter,
+                maxLabelWidth: maxLabelWidth,
+                selectedTabBackgroundColor: selectedTabBackgroundColor,
+                unSelectedTabBackgroundColor: unSelectedTabBackgroundColor,
+                selectedBorderColor: selectedBorderColor,
+              ),
+            ]),
           ),
-        ),
+          if (showBottomDivider) const Divider(height: 1),
+        ]),
       ),
-      child: Obx(() => Text(
-            label.value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 13,
-              color: isSelected
-                  ? tabbar.selectedTextColor
-                  : tabbar.unSelectedTextColor,
-            ),
-          )),
     );
   }
 
@@ -801,6 +796,10 @@ class _DesktopTabState extends State<DesktopTab>
                             child: _ListView(
                               controller: controller,
                               invisibleTabKeys: invisibleTabKeys,
+                              // The tabs are shown by the panes while split.
+                              onlyTabKeys: _tabsInPanes
+                                  ? const <String>[]
+                                  : null,
                               tabBuilder: tabBuilder,
                               tabMenuBuilder: tabMenuBuilder,
                               labelGetter: labelGetter,
@@ -1076,6 +1075,11 @@ class _ListView extends StatelessWidget {
   final DesktopTabController controller;
   final RxList<String> invisibleTabKeys;
 
+  /// The keys of the tabs to show. When not null, only these tabs are shown and
+  /// they are not scrollable, which is used for the panes of the split view and
+  /// to hide the tabs of the tab bar while they are shown by the panes.
+  final List<String>? onlyTabKeys;
+
   final TabBuilder? tabBuilder;
   final TabMenuBuilder? tabMenuBuilder;
   final LabelGetter? labelGetter;
@@ -1089,6 +1093,7 @@ class _ListView extends StatelessWidget {
   _ListView({
     required this.controller,
     required this.invisibleTabKeys,
+    this.onlyTabKeys,
     this.tabBuilder,
     this.tabMenuBuilder,
     this.labelGetter,
@@ -1121,59 +1126,76 @@ class _ListView extends StatelessWidget {
     }
   }
 
+  /// Build the widget of the tab at [index] of [state].
+  Widget _buildTab(BuildContext context, int index, TabInfo tab) {
+    final label = labelGetter == null
+        ? Rx<String>(tab.label)
+        : labelGetter!(tab.label);
+    final child = VisibilityDetector(
+      key: ValueKey(tab.key),
+      onVisibilityChanged: onVisibilityChanged,
+      child: _Tab(
+        key: ValueKey(tab.key),
+        index: index,
+        tabInfoKey: tab.key,
+        label: label,
+        tabType: controller.tabType,
+        selectedIcon: tab.selectedIcon,
+        unselectedIcon: tab.unselectedIcon,
+        closable: tab.closable,
+        selected: state.value.selected,
+        onClose: () {
+          if (tab.onTabCloseButton != null) {
+            tab.onTabCloseButton!();
+          } else {
+            controller.remove(index);
+          }
+        },
+        onTap: () {
+          controller.jumpTo(index);
+          tab.onTap?.call();
+        },
+        tabBuilder: tabBuilder,
+        tabMenuBuilder: tabMenuBuilder,
+        maxLabelWidth: maxLabelWidth,
+        selectedTabBackgroundColor: selectedTabBackgroundColor ??
+            MyTheme.tabbar(context).selectedTabBackgroundColor,
+        unSelectedTabBackgroundColor: unSelectedTabBackgroundColor,
+        selectedBorderColor: selectedBorderColor,
+      ),
+    );
+    return GestureDetector(
+      onPanStart: (e) {},
+      child: child,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Obx(() => ListView(
-        controller: state.value.scrollController,
-        scrollDirection: Axis.horizontal,
-        shrinkWrap: true,
-        physics: const BouncingScrollPhysics(),
-        children: isHideSingleItem()
-            ? List.empty()
-            : state.value.tabs.asMap().entries.map((e) {
-                final index = e.key;
-                final tab = e.value;
-                final label = labelGetter == null
-                    ? Rx<String>(tab.label)
-                    : labelGetter!(tab.label);
-                final child = VisibilityDetector(
-                  key: ValueKey(tab.key),
-                  onVisibilityChanged: onVisibilityChanged,
-                  child: _Tab(
-                    key: ValueKey(tab.key),
-                    index: index,
-                    tabInfoKey: tab.key,
-                    label: label,
-                    tabType: controller.tabType,
-                    selectedIcon: tab.selectedIcon,
-                    unselectedIcon: tab.unselectedIcon,
-                    closable: tab.closable,
-                    selected: state.value.selected,
-                    onClose: () {
-                      if (tab.onTabCloseButton != null) {
-                        tab.onTabCloseButton!();
-                      } else {
-                        controller.remove(index);
-                      }
-                    },
-                    onTap: () {
-                      controller.jumpTo(index);
-                      tab.onTap?.call();
-                    },
-                    tabBuilder: tabBuilder,
-                    tabMenuBuilder: tabMenuBuilder,
-                    maxLabelWidth: maxLabelWidth,
-                    selectedTabBackgroundColor: selectedTabBackgroundColor ??
-                        MyTheme.tabbar(context).selectedTabBackgroundColor,
-                    unSelectedTabBackgroundColor: unSelectedTabBackgroundColor,
-                    selectedBorderColor: selectedBorderColor,
-                  ),
-                );
-                return GestureDetector(
-                  onPanStart: (e) {},
-                  child: child,
-                );
-              }).toList()));
+    return Obx(() {
+      final tabs = state.value.tabs;
+      final onlyTabKeys = this.onlyTabKeys;
+      if (onlyTabKeys != null) {
+        // These tabs are shown in a fixed position (e.g. by a pane of the
+        // split view), so they must not be scrollable.
+        return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: tabs.asMap().entries
+                .where((e) => onlyTabKeys.contains(e.value.key))
+                .map((e) => _buildTab(context, e.key, e.value))
+                .toList());
+      }
+      return ListView(
+          controller: state.value.scrollController,
+          scrollDirection: Axis.horizontal,
+          shrinkWrap: true,
+          physics: const BouncingScrollPhysics(),
+          children: isHideSingleItem()
+              ? List.empty()
+              : tabs.asMap().entries
+                  .map((e) => _buildTab(context, e.key, e.value))
+                  .toList());
+    });
   }
 }
 
