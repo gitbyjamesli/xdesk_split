@@ -556,7 +556,11 @@ class _DesktopTabState extends State<DesktopTab>
   Widget build(BuildContext context) {
     return Column(children: [
       Obx(() {
+        // While the tabs are split, their panes show the tabs in their own top
+        // row (together with the logo and the window actions), so the tab bar
+        // is not needed.
         if (stateGlobal.showTabBar.isTrue &&
+            !_tabsInPanes &&
             !(kUseCompatibleUiMode && isHideSingleItem())) {
           final showBottomDivider = _showTabBarBottomDivider(tabType);
           return SizedBox(
@@ -610,7 +614,7 @@ class _DesktopTabState extends State<DesktopTab>
       children.add(Expanded(
         child: Column(
           children: [
-            _buildPaneTabRow(tabs[i]),
+            _buildPaneBar(i, tabs[i]),
             Expanded(child: _tabPane(tabs[i])),
           ],
         ),
@@ -623,13 +627,41 @@ class _DesktopTabState extends State<DesktopTab>
   /// the tab bar.
   bool get _tabsInPanes => state.value.split && state.value.tabs.length > 1;
 
-  /// The row above a pane of the split view, which shows the tab of the pane.
+  /// The top row of the pane at [index] of the split view.
   ///
-  /// Dragging it moves the window, like the tab bar.
-  Widget _buildPaneTabRow(TabInfo tab) {
+  /// It shows the tab of the pane and, to stay aligned with the panes, the
+  /// logo (first pane) and the window actions (last pane). It replaces the tab
+  /// bar, so it also acts as the title bar of the window.
+  Widget _buildPaneBar(int index, TabInfo tab) {
+    final isFirst = index == 0;
+    final isLast = index == state.value.tabs.length - 1;
+    final showChrome = stateGlobal.showTabBar.value;
     final showBottomDivider = _showTabBarBottomDivider(tabType);
     return GestureDetector(
+      // custom double tap handler
+      onTap: !(bind.isIncomingOnly() && isInHomePage()) && showMaximize
+          ? () {
+              final current = DateTime.now().millisecondsSinceEpoch;
+              final elapsed = current - _lastClickTime;
+              _lastClickTime = current;
+              if (elapsed < bind.getDoubleClickTime()) {
+                // onDoubleTap
+                toggleMaximize(isMainWindow)
+                    .then((value) => stateGlobal.setMaximized(value));
+              }
+            }
+          : null,
       onPanStart: (_) => startDragging(isMainWindow),
+      onPanCancel: () {
+        if (isMacOS) {
+          setMovable(isMainWindow, false);
+        }
+      },
+      onPanEnd: (_) {
+        if (isMacOS) {
+          setMovable(isMainWindow, false);
+        }
+      },
       // A Material is used to paint the background of the row, so that the tab
       // can still ink its hover and click effects on it.
       child: Material(
@@ -638,6 +670,24 @@ class _DesktopTabState extends State<DesktopTab>
           SizedBox(
             height: showBottomDivider ? _kTabBarHeight - 1 : _kTabBarHeight,
             child: Row(children: [
+              if (isFirst)
+                Offstage(offstage: !isMacOS, child: const SizedBox(width: 78)),
+              if (isFirst && showChrome)
+                Offstage(
+                  offstage: kUseCompatibleUiMode || isMacOS,
+                  child: Row(children: [
+                    Offstage(offstage: !showLogo, child: loadIcon(16)),
+                    Offstage(
+                        offstage: !showTitle,
+                        child: const Text(
+                          "RustDesk",
+                          style: TextStyle(fontSize: 13),
+                        ).marginOnly(left: 2))
+                  ]).marginOnly(
+                    left: 5,
+                    right: 10,
+                  ),
+                ),
               _ListView(
                 controller: controller,
                 invisibleTabKeys: invisibleTabKeys,
@@ -650,6 +700,20 @@ class _DesktopTabState extends State<DesktopTab>
                 unSelectedTabBackgroundColor: unSelectedTabBackgroundColor,
                 selectedBorderColor: selectedBorderColor,
               ),
+              const Spacer(),
+              if (isLast && showChrome)
+                WindowActionPanel(
+                  isMainWindow: isMainWindow,
+                  state: state,
+                  tabController: controller,
+                  invisibleTabKeys: invisibleTabKeys,
+                  tail: tail,
+                  showMinimize: showMinimize,
+                  showMaximize: showMaximize,
+                  showClose: showClose,
+                  onClose: onWindowCloseButton,
+                  labelGetter: labelGetter,
+                ).paddingOnly(left: 10),
             ]),
           ),
           if (showBottomDivider) const Divider(height: 1),
@@ -796,10 +860,6 @@ class _DesktopTabState extends State<DesktopTab>
                             child: _ListView(
                               controller: controller,
                               invisibleTabKeys: invisibleTabKeys,
-                              // The tabs are shown by the panes while split.
-                              onlyTabKeys: _tabsInPanes
-                                  ? const <String>[]
-                                  : null,
                               tabBuilder: tabBuilder,
                               tabMenuBuilder: tabMenuBuilder,
                               labelGetter: labelGetter,
