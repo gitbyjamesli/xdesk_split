@@ -62,6 +62,16 @@ class ViewCameraPage extends StatefulWidget {
 
   FFI get ffi => (_lastState.value! as _ViewCameraPageState)._ffi;
 
+  /// Give the keyboard focus to the page.
+  ///
+  /// Used when several tabs are shown side by side (split view).
+  void requestPageFocus() {
+    final state = _lastState.value;
+    if (state is _ViewCameraPageState) {
+      state.requestFocus();
+    }
+  }
+
   @override
   State<ViewCameraPage> createState() {
     final state = _ViewCameraPageState(id);
@@ -362,6 +372,14 @@ class _ViewCameraPageState extends State<ViewCameraPage>
         ], child: buildBody(context)));
   }
 
+  /// Give the keyboard focus to the page, e.g. when its tab is selected while
+  /// several tabs are shown side by side.
+  void requestFocus() {
+    if (!_rawKeyFocusNode.hasFocus) {
+      _rawKeyFocusNode.requestFocus();
+    }
+  }
+
   void enterView(PointerEnterEvent evt) {
     _cursorOverImage.value = true;
     _firstEnterImage.value = true;
@@ -449,7 +467,20 @@ class _ViewCameraPageState extends State<ViewCameraPage>
         if (!isWeb) bind.hostStopSystemKeyPropagate(stopped: true);
       }, child: LayoutBuilder(builder: (context, constraints) {
         final c = Provider.of<CanvasModel>(context, listen: false);
-        Future.delayed(Duration.zero, () => c.updateViewStyle());
+        if (constraints.maxWidth.isFinite && constraints.maxHeight.isFinite) {
+          final size = Size(constraints.maxWidth, constraints.maxHeight);
+          final layoutContext = context;
+          Future.delayed(Duration.zero, () {
+            if (!mounted) return;
+            // The canvas does not necessarily fill the whole window, e.g. it
+            // only takes a part of it when the window is split into panes.
+            c.updateWidgetSize(size);
+            c.updateViewStyle();
+            _ffi.inputModel.updateImageWidgetSize(size);
+            _ffi.inputModel
+                .updateCanvasOffset(canvasOffsetInWindow(layoutContext));
+          });
+        }
         final peerDisplay = CurrentDisplayState.find(widget.id);
         return Obx(
           () => _ffi.ffiModel.pi.isSet.isFalse

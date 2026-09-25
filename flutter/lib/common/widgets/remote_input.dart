@@ -657,7 +657,7 @@ class CameraRawPointerMouseRegion extends StatelessWidget {
   Widget build(BuildContext context) {
     return Listener(
       onPointerHover: (evt) {
-        final offset = evt.position;
+        final offset = inputModel.toCanvasPos(evt.position);
         double x = offset.dx;
         double y = max(0.0, offset.dy);
         inputModel.handlePointerDevicePos(

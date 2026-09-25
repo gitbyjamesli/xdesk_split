@@ -27,6 +27,7 @@ const double _kIconSize = 18;
 const double _kDividerIndent = 10;
 const double _kActionIconSize = 12;
 const double _kSplitDividerWidth = 1;
+const double _kTabPaneHeaderHeight = _kTabBarHeight;
 
 class TabInfo {
   final String key; // Notice: cm use client_id.toString() as key
@@ -607,9 +608,57 @@ class _DesktopTabState extends State<DesktopTab>
           color: MyTheme.tabbar(context).dividerColor,
         ));
       }
-      children.add(Expanded(child: _tabPane(tabs[i])));
+      children.add(Expanded(
+        child: Column(
+          children: [
+            if (_showPaneHeader)
+              _buildTabHeader(tabs[i], i == state.value.selected),
+            Expanded(child: _tabPane(tabs[i])),
+          ],
+        ),
+      ));
     }
     return _wrapCanvas(Row(children: children));
+  }
+
+  /// The pane headers label the panes, so they are only needed while the tab
+  /// bar is shown.
+  bool get _showPaneHeader =>
+      stateGlobal.showTabBar.value && !kUseCompatibleUiMode;
+
+  /// The header of a pane of the split view, which shows the label of the tab
+  /// displayed in the pane.
+  Widget _buildTabHeader(TabInfo tab, bool isSelected) {
+    final tabbar = MyTheme.tabbar(context);
+    final label =
+        labelGetter == null ? Rx<String>(tab.label) : labelGetter!(tab.label);
+    return Container(
+      height: _kTabPaneHeaderHeight,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: isSelected
+            ? tabbar.selectedTabBackgroundColor
+            : tabbar.unSelectedTabBackgroundColor,
+        border: Border(
+          bottom: BorderSide(
+            color: tabbar.dividerColor,
+            width: _kSplitDividerWidth,
+          ),
+        ),
+      ),
+      child: Obx(() => Text(
+            label.value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              color: isSelected
+                  ? tabbar.selectedTextColor
+                  : tabbar.unSelectedTextColor,
+            ),
+          )),
+    );
   }
 
   Widget _wrapCanvas(Widget child) => tabType == DesktopTabType.remoteScreen

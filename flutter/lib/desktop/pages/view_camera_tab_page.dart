@@ -70,6 +70,11 @@ class _ViewCameraTabPageState extends State<ViewCameraTabPage> {
         if (viewCameraPage is ViewCameraPage) {
           final ffi = viewCameraPage.ffi;
           bind.setCurSessionId(sessionId: ffi.sessionId);
+          if (tabController.isSplitView) {
+            // All tabs are visible at the same time, so the selected one has to
+            // take the keyboard focus explicitly.
+            viewCameraPage.requestPageFocus();
+          }
         }
         WindowController.fromWindowId(params['windowId'])
             .setTitle(getWindowNameWithId(id));

@@ -2131,6 +2131,21 @@ class EdgeScrollFallbackState {
   }
 }
 
+/// The offset of the canvas of a session within the window, relative to the
+/// origin assumed by the canvas math.
+///
+/// It is [Offset.zero] unless more than one session is displayed in the same
+/// window (split view). [context] must belong to a widget which fills the
+/// canvas area of the session.
+Offset canvasOffsetInWindow(BuildContext context) {
+  final box = context.findRenderObject();
+  if (box is! RenderBox || !box.hasSize) {
+    return Offset.zero;
+  }
+  return box.localToGlobal(Offset.zero) -
+      Offset(CanvasModel.leftToEdge, CanvasModel.topToEdge);
+}
+
 class CanvasModel with ChangeNotifier {
   // image offset of canvas
   double _x = 0;
@@ -2140,6 +2155,11 @@ class CanvasModel with ChangeNotifier {
   double _scale = 1.0;
   double _devicePixelRatio = 1.0;
   Size _size = Size.zero;
+  // The measured size of the canvas widget. It is used instead of the window
+  // based size of [getSize] when more than one session is displayed in the
+  // same window (split view), because the window based size does not apply to
+  // a single session in that case.
+  Size? _widgetSize;
   // the tabbar over the image
   // double tabBarHeight = 0.0;
   // the window border's width
@@ -2224,6 +2244,10 @@ class CanvasModel with ChangeNotifier {
       isDesktop ? windowBorderWidth + kDragToResizeAreaPadding.bottom : 0;
 
   Size getSize() {
+    final widgetSize = _widgetSize;
+    if (widgetSize != null && widgetSize.width > 0 && widgetSize.height > 0) {
+      return widgetSize;
+    }
     final mediaData = MediaQueryData.fromView(ui.window);
     final size = mediaData.size;
     // If minimized, w or h may be negative here.
@@ -2268,6 +2292,14 @@ class CanvasModel with ChangeNotifier {
   }
 
   updateSize() => _size = getSize();
+
+  /// Called when the size of the canvas widget changes.
+  ///
+  /// [updateViewStyle] must be called afterwards to apply the new size.
+  void updateWidgetSize(Size size) {
+    if (_widgetSize == size) return;
+    _widgetSize = size;
+  }
 
   updateViewStyle({refreshMousePos = true, notify = true}) async {
     final style = await bind.sessionGetViewStyle(sessionId: sessionId);

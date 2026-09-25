@@ -64,6 +64,16 @@ class RemotePage extends StatefulWidget {
 
   FFI get ffi => (_lastState.value! as _RemotePageState)._ffi;
 
+  /// Give the keyboard focus to the page.
+  ///
+  /// Used when several tabs are shown side by side (split view).
+  void requestPageFocus() {
+    final state = _lastState.value;
+    if (state is _RemotePageState) {
+      state.requestFocus();
+    }
+  }
+
   @override
   State<RemotePage> createState() {
     final state = _RemotePageState(id);
@@ -486,6 +496,14 @@ class _RemotePageState extends State<RemotePage>
         ], child: buildBody(context)));
   }
 
+  /// Give the keyboard focus to the page, e.g. when its tab is selected while
+  /// several tabs are shown side by side.
+  void requestFocus() {
+    if (!_rawKeyFocusNode.hasFocus) {
+      _rawKeyFocusNode.requestFocus();
+    }
+  }
+
   void enterView(PointerEnterEvent evt) {
     _ffi.canvasModel.rearmEdgeScroll();
 
@@ -672,14 +690,21 @@ class _ViewStyleUpdaterState extends State<_ViewStyleUpdater> {
           // Schedule the update for after the current frame to avoid setState during build.
           // Use _callbackScheduled flag to prevent accumulating multiple callbacks
           // when size changes rapidly before any callback executes.
+          final layoutContext = context;
           if (!_callbackScheduled) {
             _callbackScheduled = true;
             SchedulerBinding.instance.addPostFrameCallback((_) {
               _callbackScheduled = false;
               final currentSize = _lastSize;
               if (mounted && currentSize != null) {
+                // The canvas does not necessarily fill the whole window, e.g. it
+                // only takes a part of it when the window is split into several
+                // panes. Use the measured size and position then.
+                widget.canvasModel.updateWidgetSize(currentSize);
                 widget.canvasModel.updateViewStyle();
                 widget.inputModel.updateImageWidgetSize(currentSize);
+                widget.inputModel.updateCanvasOffset(
+                    canvasOffsetInWindow(layoutContext));
               }
             });
           }

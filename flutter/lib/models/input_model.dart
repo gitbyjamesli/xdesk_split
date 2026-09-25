@@ -394,6 +394,28 @@ class InputModel {
   Rect? _windowRect;
   List<RemoteWindowCoords> _remoteWindowCoords = [];
 
+  // Pointer events are delivered in window coordinates, while the canvas math
+  // assumes the canvas fills the window and starts at
+  // [CanvasModel.leftToEdge]/[CanvasModel.topToEdge]. When more than one
+  // session is displayed in the same window (split view), this offset has to
+  // be removed from the event positions.
+  Offset _canvasOffset = Offset.zero;
+
+  /// The offset of the canvas of this session within the window, relative to
+  /// the origin assumed by the canvas math. It is [Offset.zero] unless several
+  /// sessions share the same window.
+  Offset get canvasOffset => _canvasOffset;
+
+  /// Translate a window position of a pointer event to the position used by
+  /// the canvas math.
+  Offset toCanvasPos(Offset windowPos) => windowPos - _canvasOffset;
+
+  /// Called when the position of the canvas widget in the window changes.
+  void updateCanvasOffset(Offset canvasOffset) {
+    if (_canvasOffset == canvasOffset) return;
+    _canvasOffset = canvasOffset;
+  }
+
   late final SessionID sessionId;
 
   bool get keyboardPerm => parent.target!.ffiModel.keyboard;
@@ -1140,7 +1162,8 @@ class InputModel {
     }
     if (isPhysicalMouse.value) {
       if (!_relativeMouse.handleRelativeMouseMove(e.localPosition)) {
-        handleMouse(_getMouseEvent(e, _kMouseEventMove), e.position,
+        handleMouse(
+            _getMouseEvent(e, _kMouseEventMove), toCanvasPos(e.position),
             edgeScroll: useEdgeScroll);
       }
     }
@@ -1152,7 +1175,8 @@ class InputModel {
     if (isViewOnly) return;
     if (isViewCamera) return;
     if (peerPlatform == kPeerPlatformAndroid) {
-      handlePointerEvent('touch', kMouseEventTypePanStart, e.position);
+      handlePointerEvent(
+          'touch', kMouseEventTypePanStart, toCanvasPos(e.position));
     }
   }
 
@@ -1284,7 +1308,7 @@ class InputModel {
   void onPointerPanZoomEnd(PointerPanZoomEndEvent e) {
     if (isViewCamera) return;
     if (peerPlatform == kPeerPlatformAndroid) {
-      handlePointerEvent('touch', kMouseEventTypePanEnd, e.position);
+      handlePointerEvent('touch', kMouseEventTypePanEnd, toCanvasPos(e.position));
       return;
     }
 
@@ -1364,7 +1388,8 @@ class InputModel {
         _relativeMouse
             .sendRelativeMouseButton(_getMouseEvent(e, _kMouseEventDown));
       } else {
-        handleMouse(_getMouseEvent(e, _kMouseEventDown), e.position);
+        handleMouse(
+            _getMouseEvent(e, _kMouseEventDown), toCanvasPos(e.position));
       }
     }
   }
@@ -1386,7 +1411,7 @@ class InputModel {
         _relativeMouse
             .sendRelativeMouseButton(_getMouseEvent(e, _kMouseEventUp));
       } else {
-        handleMouse(_getMouseEvent(e, _kMouseEventUp), e.position);
+        handleMouse(_getMouseEvent(e, _kMouseEventUp), toCanvasPos(e.position));
       }
     }
   }
@@ -1408,7 +1433,8 @@ class InputModel {
     }
     if (isPhysicalMouse.value) {
       if (!_relativeMouse.handleRelativeMouseMove(e.localPosition)) {
-        handleMouse(_getMouseEvent(e, _kMouseEventMove), e.position,
+        handleMouse(
+            _getMouseEvent(e, _kMouseEventMove), toCanvasPos(e.position),
             edgeScroll: useEdgeScroll);
       }
     }
@@ -1498,7 +1524,7 @@ class InputModel {
           'buttons': 0,
           'type': _kMouseEventMove,
         },
-        pos,
+        toCanvasPos(pos),
         onExit: true,
       );
 

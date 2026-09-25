@@ -70,6 +70,11 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
         if (remotePage is RemotePage) {
           final ffi = remotePage.ffi;
           bind.setCurSessionId(sessionId: ffi.sessionId);
+          if (tabController.isSplitView) {
+            // All tabs are visible at the same time, so the selected one has to
+            // take the keyboard focus explicitly.
+            remotePage.requestPageFocus();
+          }
         }
         WindowController.fromWindowId(params['windowId'])
             .setTitle(getWindowNameWithId(id));
