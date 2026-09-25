@@ -284,6 +284,26 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
         padding: padding,
       );
       menu.insert(1, splitAction);
+      final isSplitView = tabController.isSplitView;
+      menu.insert(
+          2,
+          MenuEntryButton<String>(
+            childBuilder: (TextStyle? style) => Text(
+              translate(isSplitView
+                  ? 'Move tab out of split window'
+                  : 'Move tab to split window'),
+              style: style,
+            ),
+            proc: () {
+              if (isSplitView) {
+                tabController.moveOutOfSplitView();
+              } else {
+                tabController.moveToSplitView();
+              }
+              cancelFunc();
+            },
+            padding: padding,
+          ));
     }
 
     if (perms['restart'] != false &&

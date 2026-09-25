@@ -26,6 +26,7 @@ const double _kTabBarHeight = kDesktopRemoteTabBarHeight;
 const double _kIconSize = 18;
 const double _kDividerIndent = 10;
 const double _kActionIconSize = 12;
+const double _kSplitDividerWidth = 1;
 
 class TabInfo {
   final String key; // Notice: cm use client_id.toString() as key
@@ -65,6 +66,10 @@ class DesktopTabState {
       ScrollPosController(itemCount: 0);
   final PageController pageController = PageController();
   int selected = 0;
+
+  /// Whether the pages of all tabs are shown side by side, one pane per tab,
+  /// instead of showing a single page at a time.
+  bool split = false;
 
   TabInfo get selectedTabInfo => tabs[selected];
 
@@ -143,6 +148,7 @@ class DesktopTabController {
     }
     state.value.tabs.removeAt(index);
     state.value.scrollController.itemCount = state.value.tabs.length;
+    _exitSplitViewIfNotAvailable();
     jumpTo(toIndex);
     onRemoved?.call(index, key);
   }
@@ -213,7 +219,35 @@ class DesktopTabController {
 
   void clear() {
     state.value.tabs.clear();
+    state.value.split = false;
     state.refresh();
+  }
+
+  /// Whether the pages of all tabs are shown side by side.
+  bool get isSplitView => state.value.split;
+
+  /// Show the pages of all tabs side by side, each pane taking an equal share
+  /// of the window.
+  void moveToSplitView() {
+    if (!isDesktop) return;
+    if (state.value.tabs.length < 2) return;
+    state.update((val) => val!.split = true);
+  }
+
+  /// Fall back to the page view which shows a single page at a time.
+  void moveOutOfSplitView() {
+    if (!isDesktop) return;
+    if (!state.value.split) return;
+    state.update((val) => val!.split = false);
+    // The page view is rebuilt from scratch, make it show the selected tab.
+    jumpTo(state.value.selected, callOnSelected: false);
+  }
+
+  /// A split view makes no sense with less than two tabs.
+  void _exitSplitViewIfNotAvailable() {
+    if (state.value.split && state.value.tabs.length < 2) {
+      state.update((val) => val!.split = false);
+    }
   }
 
   Widget? widget(String key) {
@@ -547,22 +581,62 @@ class _DesktopTabState extends State<DesktopTab>
       }),
       Expanded(
           child: pageViewBuilder != null
-              ? pageViewBuilder!(_buildPageView())
-              : _buildPageView())
+              ? pageViewBuilder!(_buildBody())
+              : _buildBody())
     ]);
   }
+
+  /// Build the content area of the window: the split view showing every tab
+  /// side by side when the tabs are split, otherwise the page view showing
+  /// the selected tab only.
+  Widget _buildBody() {
+    return Obx(() => state.value.split && state.value.tabs.length > 1
+        ? _buildSplitView()
+        : _buildPageView());
+  }
+
+  /// Lay out the pages of all tabs side by side, each pane taking an equal
+  /// share of the window width.
+  Widget _buildSplitView() {
+    final tabs = state.value.tabs;
+    final children = <Widget>[];
+    for (var i = 0; i < tabs.length; i++) {
+      if (i > 0) {
+        children.add(Container(
+          width: _kSplitDividerWidth,
+          color: MyTheme.tabbar(context).dividerColor,
+        ));
+      }
+      children.add(Expanded(child: _tabPane(tabs[i])));
+    }
+    return _wrapCanvas(Row(children: children));
+  }
+
+  Widget _wrapCanvas(Widget child) => tabType == DesktopTabType.remoteScreen
+      ? Container(color: kColorCanvas, child: child)
+      : child;
+
+  /// Wrap [tab]'s page with a stable [GlobalKey], so that the page state (and
+  /// the session behind it) survives switching between the page view and the
+  /// split view.
+  Widget _tabPane(TabInfo tab) => KeyedSubtree(
+        key: _tabPaneKeys.putIfAbsent(tab.key, () => GlobalKey()),
+        child: tab.page,
+      );
+
+  final Map<String, GlobalKey> _tabPaneKeys = {};
 
   List<Widget> _tabWidgets = [];
   Widget _buildPageView() {
     final child = Container(
-        child: Obx(() => PageView(
+        child: PageView(
             controller: state.value.pageController,
             physics: NeverScrollableScrollPhysics(),
             children: () {
               if (DesktopTabType.cm == tabType) {
                 // Fix when adding a new tab still showing closed tabs with the same peer id, which would happen after the DesktopTab was stateful.
                 return state.value.tabs.map((tab) {
-                  return tab.page;
+                  return _tabPane(tab);
                 }).toList();
               }
 
@@ -575,21 +649,18 @@ class _DesktopTabState extends State<DesktopTab>
                   tabLen == _tabWidgets.length + 1) {
                 /// On add. Use the previous list(pointer) to prevent item's state init twice.
                 /// *[_tabWidgets.isNotEmpty] means TabsWindow(remote_tab_page or file_manager_tab_page) opened before, but was hidden. In this case, we have to reload, otherwise the child can't be built.
-                _tabWidgets.add(state.value.tabs.last.page);
+                _tabWidgets.add(_tabPane(state.value.tabs.last));
                 return _tabWidgets;
               } else {
                 /// On remove or change. Use new list(pointer) to reload list children so that items loading order is normal.
                 /// the Widgets in list must enable [AutomaticKeepAliveClientMixin]
-                final newList = state.value.tabs.map((v) => v.page).toList();
+                final newList =
+                    state.value.tabs.map((v) => _tabPane(v)).toList();
                 _tabWidgets = newList;
                 return newList;
               }
-            }())));
-    if (tabType == DesktopTabType.remoteScreen) {
-      return Container(color: kColorCanvas, child: child);
-    } else {
-      return child;
-    }
+            }()));
+    return _wrapCanvas(child);
   }
 
   /// Check whether to show ListView

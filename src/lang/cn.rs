@@ -513,6 +513,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Sort tags", "对标签进行排序"),
         ("Open connection in new tab", "在选项卡中打开新连接"),
         ("Move tab to new window", "将标签页移至新窗口"),
+        ("Move tab to split window", "将标签页移至拆分窗口"),
+        ("Move tab out of split window", "将标签页移出拆分窗口"),
         ("Can not be empty", "不能为空"),
         ("Already exists", "已经存在"),
         ("Change Password", "更改密码"),
