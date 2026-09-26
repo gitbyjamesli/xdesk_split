@@ -492,7 +492,8 @@ class _RemotePageState extends State<RemotePage>
           clientClose(sessionId, _ffi);
           return false;
         },
-        child: MultiProvider(providers: [
+        child: _buildDropTarget(
+            child: MultiProvider(providers: [
           ChangeNotifierProvider.value(value: _ffi.ffiModel),
           ChangeNotifierProvider.value(value: _ffi.imageModel),
           ChangeNotifierProvider.value(value: _ffi.cursorModel),
