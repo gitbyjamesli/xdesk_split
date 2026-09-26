@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -19,6 +21,7 @@ import '../../models/input_model.dart';
 import '../../models/platform_model.dart';
 import '../../common/shared_state.dart';
 import '../../utils/image.dart';
+import '../../utils/multi_window_manager.dart';
 import '../widgets/remote_toolbar.dart';
 import '../widgets/kb_layout_type_chooser.dart';
 import '../widgets/tabbar_widget.dart';
@@ -100,6 +103,8 @@ class _RemotePageState extends State<RemotePage>
   var _blockableOverlayState = BlockableOverlayState();
 
   final FocusNode _rawKeyFocusNode = FocusNode(debugLabel: "rawkeyFocusNode");
+
+  final _dropMaskVisible = false.obs;
 
   // Debounce timer for pointer lock center updates during window events.
   // Uses kDefaultPointerLockCenterThrottleMs from consts.dart for the duration.
@@ -493,7 +498,71 @@ class _RemotePageState extends State<RemotePage>
           ChangeNotifierProvider.value(value: _ffi.cursorModel),
           ChangeNotifierProvider.value(value: _ffi.canvasModel),
           ChangeNotifierProvider.value(value: _ffi.recordingModel),
-        ], child: buildBody(context)));
+        ], child: buildBody(context))));
+  }
+
+  /// Accept files dragged from the local desktop and transfer them to the peer
+  /// through the file transfer window.
+  Widget _buildDropTarget({required Widget child}) {
+    if (isWeb) return child;
+    return DropTarget(
+      onDragEntered: (_) => _dropMaskVisible.value = true,
+      onDragExited: (_) => _dropMaskVisible.value = false,
+      onDragDone: (details) {
+        _dropMaskVisible.value = false;
+        _sendDroppedFiles(details);
+      },
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          child,
+          Obx(() => _dropMaskVisible.value
+              ? Positioned.fill(child: _buildDropMask())
+              : const SizedBox.shrink()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDropMask() {
+    return Container(
+      color: MyTheme.accent.withOpacity(0.2),
+      alignment: Alignment.center,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.file_upload_outlined, color: Colors.white, size: 32),
+          Text(
+            translate('Drop files to send them to the remote device'),
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+          ).marginOnly(top: 8),
+        ]),
+      ),
+    );
+  }
+
+  /// Send the files dragged from the local desktop to the peer.
+  ///
+  /// A file transfer needs its own connection to the peer, so the file
+  /// transfer window is opened (or reused) and the files are sent by it.
+  void _sendDroppedFiles(DropDoneDetails details) {
+    final files = <Map<String, dynamic>>[];
+    for (final file in details.files) {
+      files.add({'path': file.path, 'name': file.name});
+    }
+    if (files.isEmpty) return;
+    rustDeskWinManager.call(WindowType.Main, kWindowEventSendFilesToPeer,
+        jsonEncode({
+          'id': widget.id,
+          'files': files,
+          'password': widget.password,
+          'isSharedPassword': widget.isSharedPassword,
+          'forceRelay': widget.forceRelay,
+        }));
   }
 
   /// Give the keyboard focus to the page, e.g. when its tab is selected while

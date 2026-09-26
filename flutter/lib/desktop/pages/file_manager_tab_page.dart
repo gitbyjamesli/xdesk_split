@@ -58,6 +58,7 @@ class _FileManagerTabPageState extends State<FileManagerTabPage> {
           tabController: tabController,
           forceRelay: params['forceRelay'],
           connToken: params['connToken'],
+          sendFiles: LocalFileToSend.listFromJson(params['send_files']),
         )));
   }
 
@@ -72,6 +73,11 @@ class _FileManagerTabPageState extends State<FileManagerTabPage> {
       if (call.method == kWindowEventNewFileTransfer) {
         final args = jsonDecode(call.arguments);
         final id = args['id'];
+        final sendFiles = LocalFileToSend.listFromJson(args['send_files']);
+        // The files have to be sent by the file transfer page, which already
+        // exists if the peer has a tab in this window.
+        final exists =
+            tabController.state.value.tabs.any((tab) => tab.key == id);
         windowOnTop(windowId());
         tabController.add(TabInfo(
             key: id,
@@ -95,7 +101,14 @@ class _FileManagerTabPageState extends State<FileManagerTabPage> {
               tabController: tabController,
               forceRelay: args['forceRelay'],
               connToken: args['connToken'],
+              sendFiles: sendFiles,
             )));
+        if (exists && sendFiles.isNotEmpty) {
+          final page = tabController.widget(id);
+          if (page is FileManagerPage) {
+            page.sendLocalFiles(sendFiles);
+          }
+        }
       } else if (call.method == "onDestroy") {
         tabController.clear();
       } else if (call.method == kWindowActionRebuild) {

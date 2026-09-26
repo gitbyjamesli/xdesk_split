@@ -515,6 +515,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Move tab to new window", ""),
         ("Move tab to split window", ""),
         ("Move tab out of split window", ""),
+        ("Drop files to send them to the remote device", ""),
         ("Can not be empty", ""),
         ("Already exists", ""),
         ("Change Password", ""),

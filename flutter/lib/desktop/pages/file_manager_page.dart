@@ -51,6 +51,36 @@ enum MouseFocusScope {
   none
 }
 
+/// A local file which is going to be sent to the remote side.
+///
+/// It is built from the files dropped on a remote session window, see
+/// [RemotePage], and sent to the peer by the file transfer window.
+class LocalFileToSend {
+  final String path;
+  final String name;
+
+  const LocalFileToSend({required this.path, required this.name});
+
+  static List<LocalFileToSend> listFromJson(dynamic json) {
+    final files = <LocalFileToSend>[];
+    if (json is List) {
+      for (final item in json) {
+        if (item is Map && item['path'] is String) {
+          files.add(LocalFileToSend(
+            path: item['path'] as String,
+            name: item['name'] is String ? item['name'] as String : '',
+          ));
+        }
+      }
+    }
+    return files;
+  }
+}
+
+/// Local files which are waiting for the file transfer page of the peer to be
+/// created, keyed by peer id, see [FileManagerPage.sendLocalFiles].
+final Map<String, List<LocalFileToSend>> pendingSendFiles = {};
+
 class FileManagerPage extends StatefulWidget {
   FileManagerPage(
       {Key? key,
@@ -59,7 +89,8 @@ class FileManagerPage extends StatefulWidget {
       required this.isSharedPassword,
       this.tabController,
       this.connToken,
-      this.forceRelay})
+      this.forceRelay,
+      this.sendFiles})
       : super(key: key);
   final String id;
   final String? password;
@@ -67,9 +98,29 @@ class FileManagerPage extends StatefulWidget {
   final bool? forceRelay;
   final String? connToken;
   final DesktopTabController? tabController;
+
+  /// Local files to send to the peer as soon as the session is ready.
+  final List<LocalFileToSend>? sendFiles;
+
   final SimpleWrapper<State<FileManagerPage>?> _lastState = SimpleWrapper(null);
 
   FFI get ffi => (_lastState.value! as _FileManagerPageState)._ffi;
+
+  /// Send local files to the remote side.
+  ///
+  /// Used when local files are dropped on a remote session window: the files
+  /// are sent as soon as the file transfer session is connected, the user may
+  /// have to input the password first.
+  void sendLocalFiles(List<LocalFileToSend> files) {
+    if (files.isEmpty) return;
+    final state = _lastState.value;
+    if (state is _FileManagerPageState) {
+      state.sendLocalFiles(files);
+    } else {
+      // The state is not created yet, the files are sent when it is.
+      pendingSendFiles[id] = files;
+    }
+  }
 
   @override
   State<StatefulWidget> createState() {
@@ -118,6 +169,11 @@ class _FileManagerPageState extends State<FileManagerPage>
       widget.tabController?.onSelected?.call(widget.id);
     });
     WidgetsBinding.instance.addObserver(this);
+    final sendFiles =
+        widget.sendFiles ?? pendingSendFiles.remove(widget.id);
+    if (sendFiles != null && sendFiles.isNotEmpty) {
+      sendLocalFiles(sendFiles);
+    }
   }
 
   @override
@@ -134,6 +190,53 @@ class _FileManagerPageState extends State<FileManagerPage>
 
   @override
   bool get wantKeepAlive => true;
+
+  /// Send the local files [files] to the remote side.
+  ///
+  /// Used when local files are dropped on a remote session window: the files
+  /// are sent as soon as the file transfer session is ready, because the
+  /// connected peer may have to input the password before.
+  Future<void> sendLocalFiles(List<LocalFileToSend> files) async {
+    if (files.isEmpty) return;
+    // Wait for the remote directory which is set once the peer is connected.
+    for (var i = 0; i < 300 && mounted; i++) {
+      if (model.remoteController.directory.value.path.isNotEmpty) {
+        break;
+      }
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    if (!mounted || model.remoteController.directory.value.path.isEmpty) {
+      debugPrint('Failed to send files, the session is not ready');
+      return;
+    }
+    final items = SelectedItems(isLocal: true);
+    for (final file in files) {
+      final entry = _localEntry(file);
+      if (entry != null) {
+        items.add(entry);
+      }
+    }
+    if (items.items.isEmpty) return;
+    final otherSideData = model.remoteController.directoryData();
+    model.localController.sendFiles(items, otherSideData);
+  }
+
+  Entry? _localEntry(LocalFileToSend file) {
+    try {
+      final isDir = FileSystemEntity.isDirectorySync(file.path);
+      final name = file.name.isNotEmpty
+          ? file.name
+          : PathUtil.split(file.path, isWindows).last;
+      return Entry()
+        ..path = file.path
+        ..name = name
+        ..entryType = isDir ? 0 : 4
+        ..size = isDir ? 0 : File(file.path).lengthSync();
+    } catch (e) {
+      debugPrint('Failed to read the local file ${file.path}: $e');
+      return null;
+    }
+  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {

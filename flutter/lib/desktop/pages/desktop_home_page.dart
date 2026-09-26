@@ -866,6 +866,23 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           await rustDeskWinManager.moveTabToNewWindow(
               windowId, args[1], args[2], windowType);
         }
+      } else if (call.method == kWindowEventSendFilesToPeer) {
+        final args = jsonDecode(call.arguments);
+        final id = args['id'];
+        if (id is String) {
+          // Open (or reuse) the file transfer window of the peer. The files ride
+          // along with the window parameters, so that both a new and an already
+          // opened file transfer window can pick them up.
+          await rustDeskWinManager.newFileTransfer(
+            id,
+            password: args['password'],
+            isSharedPassword: args['isSharedPassword'],
+            forceRelay: args['forceRelay'],
+            sendFiles: (args['files'] as List?)
+                ?.map((e) => Map<String, dynamic>.from(e as Map))
+                .toList(),
+          );
+        }
       } else if (call.method == kWindowEventOpenMonitorSession) {
         final args = jsonDecode(call.arguments);
         final windowId = args['window_id'] as int;

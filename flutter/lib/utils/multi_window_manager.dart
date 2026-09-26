@@ -230,6 +230,7 @@ class RustDeskMultiWindowManager {
     bool? isRDP,
     bool? isSharedPassword,
     String? connToken,
+    List<Map<String, dynamic>>? sendFiles,
   }) async {
     var params = {
       "type": type.index,
@@ -248,6 +249,11 @@ class RustDeskMultiWindowManager {
     }
     if (connToken != null) {
       params['connToken'] = connToken;
+    }
+    if (sendFiles != null) {
+      // Local files which are sent to the peer as soon as the file transfer
+      // window (or tab) is ready, see [RemotePage].
+      params['send_files'] = sendFiles;
     }
     final msg = jsonEncode(params);
 
@@ -292,6 +298,7 @@ class RustDeskMultiWindowManager {
     bool? isSharedPassword,
     bool? forceRelay,
     String? connToken,
+    List<Map<String, dynamic>>? sendFiles,
   }) async {
     return await newSession(
       WindowType.FileTransfer,
@@ -302,6 +309,7 @@ class RustDeskMultiWindowManager {
       forceRelay: forceRelay,
       isSharedPassword: isSharedPassword,
       connToken: connToken,
+      sendFiles: sendFiles,
     );
   }
 

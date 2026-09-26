@@ -77,6 +77,8 @@ const String kWindowEventSetFullscreen = "set_fullscreen";
 const String kWindowEventMoveTabToNewWindow = "move_tab_to_new_window";
 const String kWindowEventGetCachedSessionData = "get_cached_session_data";
 const String kWindowEventOpenMonitorSession = "open_monitor_session";
+// Send local files (dropped on a session window) to a peer, see [RemotePage].
+const String kWindowEventSendFilesToPeer = "send_files_to_peer";
 
 const String kOptionViewStyle = "view_style";
 const String kOptionScrollStyle = "scroll_style";
