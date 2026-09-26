@@ -288,8 +288,7 @@ class _FileManagerPageState extends State<FileManagerPage>
 
   Widget dropArea(FileManagerView fileView) {
     return DropTarget(
-        onDragDone: (detail) =>
-            handleDragDone(detail, fileView.controller.isLocal),
+        onDragDone: (detail) => handleDragDone(detail),
         onDragEntered: (enter) {
           _dropMaskVisible.value = true;
         },
@@ -470,21 +469,20 @@ class _FileManagerPageState extends State<FileManagerPage>
     );
   }
 
-  void handleDragDone(DropDoneDetails details, bool isLocal) {
-    if (isLocal) {
-      // ignore local
-      return;
-    }
-    final items = SelectedItems(isLocal: false);
+  void handleDragDone(DropDoneDetails details) {
+    // Files dragged from the local system can only be sent to the remote side,
+    // whichever of the two file views they are dropped on.
+    final items = SelectedItems(isLocal: true);
     for (var file in details.files) {
-      final f = File(file.path);
+      final isDir = FileSystemEntity.isDirectorySync(file.path);
       items.add(Entry()
         ..path = file.path
         ..name = file.name
-        ..size = FileSystemEntity.isDirectorySync(f.path) ? 0 : f.lengthSync());
+        ..entryType = isDir ? 0 : 4
+        ..size = isDir ? 0 : File(file.path).lengthSync());
     }
-    final otherSideData = model.localController.directoryData();
-    model.remoteController.sendFiles(items, otherSideData);
+    final otherSideData = model.remoteController.directoryData();
+    model.localController.sendFiles(items, otherSideData);
   }
 }
 
