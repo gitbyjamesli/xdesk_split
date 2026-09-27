@@ -113,9 +113,8 @@ class _RemotePageState extends State<RemotePage>
   // The remote directory which the file transfer window has opened.
   final _dropTargetDir = ''.obs;
   final TextEditingController _dropDirController = TextEditingController();
-  // The directory which the peer opens by default, asked once per session.
+  // The directory which the peer has opened, asked again for every drop.
   String _peerDefaultDir = '';
-  bool _peerDefaultDirQueried = false;
 
   // Debounce timer for pointer lock center updates during window events.
   // Uses kDefaultPointerLockCenterThrottleMs from consts.dart for the duration.
@@ -565,35 +564,34 @@ class _RemotePageState extends State<RemotePage>
     }
   }
 
-  /// The directory which the peer opens by default, e.g. its home directory.
+  /// The directory which the peer has opened, e.g. in its file explorer.
   ///
   /// It is read from the peer with the same request which the file transfer
   /// window sends when its session is connected, so that the files which are
   /// dropped on this page have a sensible target directory even when no file
-  /// transfer window is opened yet. The peer may not answer it (older peer, no
+  /// transfer window is opened yet. The peer answers the directory of the
+  /// window which has the focus there. It may not answer at all (older peer, no
   /// file transfer permission), in that case the target directory is left empty
   /// and the file transfer window decides.
   Future<String?> _getPeerDefaultDir() async {
-    if (_peerDefaultDir.isNotEmpty) return _peerDefaultDir;
-    if (_peerDefaultDirQueried) return null;
-    _peerDefaultDirQueried = true;
     final options = _ffi.fileModel.remoteController.options;
-    if (options.value.home.isEmpty) {
-      bind.sessionReadRemoteDir(
-          sessionId: _ffi.sessionId, path: '', includeHidden: false);
-      for (var i = 0; i < 30; i++) {
-        if (!mounted) return null;
-        if (options.value.home.isNotEmpty) {
-          break;
-        }
-        await Future.delayed(const Duration(milliseconds: 100));
+    // The peer may answer another directory than the last time, e.g. after
+    // another window got the focus there, so ask again and take the answer.
+    options.value.home = '';
+    bind.sessionReadRemoteDir(
+        sessionId: _ffi.sessionId, path: '', includeHidden: false);
+    for (var i = 0; i < 10; i++) {
+      if (!mounted) return null;
+      if (options.value.home.isNotEmpty) {
+        break;
       }
+      await Future.delayed(const Duration(milliseconds: 100));
     }
     if (options.value.home.isNotEmpty) {
       _peerDefaultDir = options.value.home;
       return _peerDefaultDir;
     }
-    return null;
+    return _peerDefaultDir.isNotEmpty ? _peerDefaultDir : null;
   }
 
   /// Show the drop panel, the files are sent by the file transfer window when

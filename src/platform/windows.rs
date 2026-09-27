@@ -4574,13 +4574,44 @@ ProcessId=10136
 
 static LAST_OPENED_DIR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+/// Convert a window handle into a comparable value, the shell returns it as a
+/// number or as a typed handle, depending on the interface.
+trait IntoHandle {
+    fn into_handle(self) -> usize;
+}
+
+impl IntoHandle for i32 {
+    fn into_handle(self) -> usize {
+        self as usize
+    }
+}
+
+impl IntoHandle for windows::Win32::Foundation::HWND {
+    fn into_handle(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// The local path of a folder url, e.g. `file:///C:/work/` -> `C:\work`.
+fn dir_from_url(url: &str) -> Option<String> {
+    let path = url::Url::parse(url).ok()?.to_file_path().ok()?;
+    let mut path = path.to_str()?.to_string();
+    // A folder url ends with a separator, the controlling side shows the path.
+    while path.len() > 3 && path.ends_with(std::path::MAIN_SEPARATOR) {
+        path.pop();
+    }
+    Some(path)
+}
+
 /// The folder which the user has opened, e.g. in Explorer, most recently.
 ///
 /// The controlling side asks for it to use it as the target directory of the
 /// files which are dropped on a session, see
-/// `crate::server::connection::Connection`. The last found folder is kept, so
-/// that closing the folder does not lose it. Returns `None` when no folder was
-/// seen yet, e.g. when no user is logged in.
+/// `crate::server::connection::Connection`. The folder of the window which has
+/// the focus is used, the opened windows itself are not enumerated in a defined
+/// order. The last found folder is kept, so that closing the folder or focusing
+/// something else does not lose it. Returns `None` when no folder was seen yet,
+/// e.g. when no user is logged in.
 pub fn last_opened_dir() -> Option<String> {
     use windows::core::Interface;
     use windows::Win32::System::Com::{
@@ -4589,17 +4620,27 @@ pub fn last_opened_dir() -> Option<String> {
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Shell::{IShellWindows, IWebBrowser2, ShellWindows};
 
-    let dir = (|| -> Option<String> {
+    // The window which has the focus. Without it two opened folders are answered
+    // in a random order, which is what the user would see in the dialog.
+    let foreground = winapi::um::winuser::GetForegroundWindow() as usize;
+
+    let (focused_dir, any_dir) = (|| -> (Option<String>, Option<String>) {
         unsafe {
             // Shell windows can only be enumerated from a thread which has
             // OLE initialized and the shell is an apartment threaded object.
             let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).0 == 0;
-            let res = (|| -> Option<String> {
+            let res = (|| -> (Option<String>, Option<String>) {
+                let mut any_dir = None;
                 let windows: IShellWindows =
-                    CoCreateInstance(&ShellWindows, None, CLSCTX_ALL).ok()?;
-                let count = windows.Count().ok()?;
+                    match CoCreateInstance(&ShellWindows, None, CLSCTX_ALL) {
+                        Ok(windows) => windows,
+                        Err(_) => return (None, None),
+                    };
+                let count = match windows.Count() {
+                    Ok(count) => count,
+                    Err(_) => return (None, None),
+                };
                 for i in 0..count {
-                    // The first one is the folder which was active last.
                     let item = match windows.Item(&VARIANT::from(i)) {
                         Ok(item) => item,
                         Err(_) => continue,
@@ -4608,25 +4649,25 @@ pub fn last_opened_dir() -> Option<String> {
                         Ok(browser) => browser,
                         Err(_) => continue,
                     };
-                    let url = match browser.LocationURL() {
-                        Ok(url) => format!("{}", url),
+                    let dir = match browser.LocationURL() {
+                        Ok(url) => match dir_from_url(&format!("{}", url)) {
+                            Some(dir) => dir,
+                            None => continue,
+                        },
                         Err(_) => continue,
                     };
-                    if let Ok(url) = url::Url::parse(&url) {
-                        if let Ok(path) = url.to_file_path() {
-                            if let Some(path) = path.to_str() {
-                                // A folder url ends with a separator, the
-                                // controlling side shows the path, drop it.
-                                let mut path = path.to_string();
-                                while path.len() > 3 && path.ends_with(std::path::MAIN_SEPARATOR) {
-                                    path.pop();
-                                }
-                                return Some(path);
-                            }
-                        }
+                    let focused = match browser.HWND() {
+                        Ok(hwnd) => hwnd.into_handle() as u32 == foreground as u32,
+                        Err(_) => false,
+                    };
+                    if focused {
+                        return (Some(dir), None);
+                    }
+                    if any_dir.is_none() {
+                        any_dir = Some(dir);
                     }
                 }
-                None
+                (None, any_dir)
             })();
             if initialized {
                 CoUninitialize();
@@ -4634,11 +4675,9 @@ pub fn last_opened_dir() -> Option<String> {
             res
         }
     })();
-    let mut last = LAST_OPENED_DIR
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(dir) = dir {
+    let mut last = LAST_OPENED_DIR.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(dir) = focused_dir {
         *last = Some(dir);
     }
-    last.clone()
+    last.clone().or(any_dir)
 }
