@@ -4604,7 +4604,7 @@ pub fn last_opened_dir() -> Option<String> {
 
     // The window which has the focus. Without it two opened folders are answered
     // in a random order, which is what the user would see in the dialog.
-    let foreground = winapi::um::winuser::GetForegroundWindow() as usize;
+    let foreground = unsafe { winapi::um::winuser::GetForegroundWindow() as usize };
 
     let (focused_dir, any_dir) = (|| -> (Option<String>, Option<String>) {
         unsafe {
