@@ -36,29 +36,38 @@ class _FileManagerTabPageState extends State<FileManagerTabPage> {
           .setTitle(getWindowNameWithId(id));
     };
     tabController.onRemoved = (_, id) => onRemoveId(id);
+    addFileTransferTab(params['id'], params,
+        sendFiles: LocalFileToSend.listFromJson(params['send_files']),
+        toPath: params['to_path'] as String?);
+  }
+
+  /// Add the tab of the peer, which connects the file transfer session.
+  void addFileTransferTab(dynamic id, Map<String, dynamic> args,
+      {List<LocalFileToSend> sendFiles = const [], String? toPath}) {
     tabController.add(TabInfo(
-        key: params['id'],
-        label: params['id'],
+        key: id,
+        label: id,
         selectedIcon: selectedIcon,
         unselectedIcon: unselectedIcon,
         onTabCloseButton: () async {
           if (await desktopTryShowTabAuditDialogCloseCancelled(
-            id: params['id'],
+            id: id,
             tabController: tabController,
           )) {
             return;
           }
-          tabController.closeBy(params['id']);
+          tabController.closeBy(id);
         },
         page: FileManagerPage(
-          key: ValueKey(params['id']),
-          id: params['id'],
-          password: params['password'],
-          isSharedPassword: params['isSharedPassword'],
+          key: ValueKey(id),
+          id: id,
+          password: args['password'],
+          isSharedPassword: args['isSharedPassword'],
           tabController: tabController,
-          forceRelay: params['forceRelay'],
-          connToken: params['connToken'],
-          sendFiles: LocalFileToSend.listFromJson(params['send_files']),
+          forceRelay: args['forceRelay'],
+          connToken: args['connToken'],
+          sendFiles: sendFiles,
+          toPath: toPath,
         )));
   }
 
@@ -79,35 +88,36 @@ class _FileManagerTabPageState extends State<FileManagerTabPage> {
         final exists =
             tabController.state.value.tabs.any((tab) => tab.key == id);
         windowOnTop(windowId());
-        tabController.add(TabInfo(
-            key: id,
-            label: id,
-            selectedIcon: selectedIcon,
-            unselectedIcon: unselectedIcon,
-            onTabCloseButton: () async {
-              if (await desktopTryShowTabAuditDialogCloseCancelled(
-                id: id,
-                tabController: tabController,
-              )) {
-                return;
-              }
-              tabController.closeBy(id);
-            },
-            page: FileManagerPage(
-              key: ValueKey(id),
-              id: id,
-              password: args['password'],
-              isSharedPassword: args['isSharedPassword'],
-              tabController: tabController,
-              forceRelay: args['forceRelay'],
-              connToken: args['connToken'],
-              sendFiles: sendFiles,
-            )));
+        addFileTransferTab(id, args,
+            sendFiles: sendFiles, toPath: args['to_path'] as String?);
         if (exists && sendFiles.isNotEmpty) {
           final page = tabController.widget(id);
           if (page is FileManagerPage) {
-            page.sendLocalFiles(sendFiles);
+            page.sendLocalFiles(sendFiles, toPath: args['to_path'] as String?);
           }
+        }
+      } else if (call.method == kWindowEventGetFilesTargetDir) {
+        // Answer the remote directory which is opened here, it is the default
+        // target directory of the files which are dropped on a session window.
+        final id = jsonDecode(call.arguments)['id'];
+        final page = tabController.widget(id);
+        return page is FileManagerPage ? (page.remoteDir() ?? '') : '';
+      } else if (call.method == kWindowEventSendFilesToPeerWithTargetDir) {
+        final args = jsonDecode(call.arguments);
+        final id = args['id'];
+        final sendFiles = LocalFileToSend.listFromJson(args['files']);
+        final toPath = args['toPath'] as String?;
+        if (tabController.state.value.tabs.any((tab) => tab.key == id)) {
+          final page = tabController.widget(id);
+          if (page is FileManagerPage) {
+            windowOnTop(windowId());
+            page.sendLocalFiles(sendFiles, toPath: toPath);
+          }
+        } else {
+          // The peer has no tab in this window, add it, the files are sent as
+          // soon as its session is connected.
+          windowOnTop(windowId());
+          addFileTransferTab(id, args, sendFiles: sendFiles, toPath: toPath);
         }
       } else if (call.method == "onDestroy") {
         tabController.clear();

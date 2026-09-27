@@ -231,6 +231,7 @@ class RustDeskMultiWindowManager {
     bool? isSharedPassword,
     String? connToken,
     List<Map<String, dynamic>>? sendFiles,
+    String? toPath,
   }) async {
     var params = {
       "type": type.index,
@@ -254,6 +255,10 @@ class RustDeskMultiWindowManager {
       // Local files which are sent to the peer as soon as the file transfer
       // window (or tab) is ready, see [RemotePage].
       params['send_files'] = sendFiles;
+    }
+    if (toPath != null) {
+      // The remote directory which the files are sent to.
+      params['to_path'] = toPath;
     }
     final msg = jsonEncode(params);
 
@@ -299,6 +304,7 @@ class RustDeskMultiWindowManager {
     bool? forceRelay,
     String? connToken,
     List<Map<String, dynamic>>? sendFiles,
+    String? toPath,
   }) async {
     return await newSession(
       WindowType.FileTransfer,
@@ -310,6 +316,7 @@ class RustDeskMultiWindowManager {
       isSharedPassword: isSharedPassword,
       connToken: connToken,
       sendFiles: sendFiles,
+      toPath: toPath,
     );
   }
 

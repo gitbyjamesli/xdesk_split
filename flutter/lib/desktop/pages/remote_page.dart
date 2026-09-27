@@ -106,6 +106,14 @@ class _RemotePageState extends State<RemotePage>
 
   final _dropMaskVisible = false.obs;
 
+  // Local files which are dropped on this page, they are sent after the target
+  // directory is confirmed in the drop panel.
+  final _dropFiles = <Map<String, dynamic>>[];
+  final _dropPanelVisible = false.obs;
+  // The remote directory which the file transfer window has opened.
+  final _dropTargetDir = ''.obs;
+  final TextEditingController _dropDirController = TextEditingController();
+
   // Debounce timer for pointer lock center updates during window events.
   // Uses kDefaultPointerLockCenterThrottleMs from consts.dart for the duration.
   Timer? _pointerLockCenterDebounceTimer;
@@ -346,6 +354,7 @@ class _RemotePageState extends State<RemotePage>
     _ffi.imageModel.disposeImage();
     _ffi.cursorModel.disposeImages();
     _rawKeyFocusNode.dispose();
+    _dropDirController.dispose();
     await _ffi.close(closeSession: closeSession);
     _timer?.cancel();
     _ffi.dialogManager.dismissAll();
@@ -507,17 +516,20 @@ class _RemotePageState extends State<RemotePage>
   Widget _buildDropTarget({required Widget child}) {
     if (isWeb) return child;
     return DropTarget(
-      onDragEntered: (_) => _dropMaskVisible.value = true,
+      onDragEntered: (_) {
+        _dropMaskVisible.value = true;
+        _queryDropTargetDir();
+      },
       onDragExited: (_) => _dropMaskVisible.value = false,
       onDragDone: (details) {
         _dropMaskVisible.value = false;
-        _sendDroppedFiles(details);
+        _startSendFiles(details);
       },
       child: Stack(
         fit: StackFit.expand,
         children: [
           child,
-          Obx(() => _dropMaskVisible.value
+          Obx(() => (_dropMaskVisible.value || _dropPanelVisible.value)
               ? Positioned.fill(child: _buildDropMask())
               : const SizedBox.shrink()),
         ],
@@ -525,45 +537,146 @@ class _RemotePageState extends State<RemotePage>
     );
   }
 
-  Widget _buildDropMask() {
-    return Container(
-      color: MyTheme.accent.withOpacity(0.2),
-      alignment: Alignment.center,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        decoration: BoxDecoration(
-          color: Colors.black54,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.file_upload_outlined, color: Colors.white, size: 32),
-          Text(
-            translate('Drop files to send them to the remote device'),
-            style: const TextStyle(color: Colors.white, fontSize: 14),
-          ).marginOnly(top: 8),
-        ]),
-      ),
-    );
+  /// Ask the file transfer window of the peer for the remote directory which is
+  /// opened there, it is the default target directory of the dropped files.
+  Future<void> _queryDropTargetDir() async {
+    final dir = await _getDropTargetDir();
+    if (!mounted || dir == null) return;
+    _dropTargetDir.value = dir;
+    if (_dropPanelVisible.value && _dropDirController.text.isEmpty) {
+      _dropDirController.text = dir;
+    }
   }
 
-  /// Send the files dragged from the local desktop to the peer.
-  ///
-  /// A file transfer needs its own connection to the peer, so the file
-  /// transfer window is opened (or reused) and the files are sent by it.
-  void _sendDroppedFiles(DropDoneDetails details) {
+  Future<String?> _getDropTargetDir() async {
+    try {
+      final res = await rustDeskWinManager.call(WindowType.Main,
+          kWindowEventGetFilesTargetDir, jsonEncode({'id': widget.id}));
+      final dir = res.result;
+      return dir is String && dir.isNotEmpty ? dir : null;
+    } catch (e) {
+      debugPrint('Failed to get the target directory of the dropped files: $e');
+      return null;
+    }
+  }
+
+  /// Show the drop panel, the files are sent by the file transfer window when
+  /// the target directory is confirmed.
+  void _startSendFiles(DropDoneDetails details) {
     final files = <Map<String, dynamic>>[];
     for (final file in details.files) {
       files.add({'path': file.path, 'name': file.name});
     }
     if (files.isEmpty) return;
-    rustDeskWinManager.call(WindowType.Main, kWindowEventSendFilesToPeer,
-        jsonEncode({
-          'id': widget.id,
-          'files': files,
-          'password': widget.password,
-          'isSharedPassword': widget.isSharedPassword,
-          'forceRelay': widget.forceRelay,
-        }));
+    _dropFiles
+      ..clear()
+      ..addAll(files);
+    _dropDirController.text = _dropTargetDir.value;
+    _dropPanelVisible.value = true;
+    // The remote directory may be changed since the last query.
+    _queryDropTargetDir();
+  }
+
+  /// Let the file transfer window of the peer send the dropped files to
+  /// [toPath], the remote directory which it has opened is used when [toPath]
+  /// is empty.
+  void _sendFilesToRemote(String toPath) {
+    if (_dropFiles.isEmpty) return;
+    final args = jsonEncode({
+      'id': widget.id,
+      'files': _dropFiles,
+      'toPath': toPath,
+      'password': widget.password,
+      'isSharedPassword': widget.isSharedPassword,
+      'forceRelay': widget.forceRelay,
+    });
+    _hideDropPanel();
+    rustDeskWinManager.call(
+        WindowType.Main, kWindowEventSendFilesToPeerWithTargetDir, args);
+  }
+
+  void _hideDropPanel() {
+    _dropFiles.clear();
+    _dropPanelVisible.value = false;
+    _dropMaskVisible.value = false;
+    if (mounted) {
+      _rawKeyFocusNode.requestFocus();
+    }
+  }
+
+  Widget _buildDropMask() {
+    final confirmed = _dropPanelVisible.value;
+    return Container(
+      color: MyTheme.accent.withOpacity(0.2),
+      alignment: Alignment.center,
+      child: Material(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 320, maxWidth: 480),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.file_upload_outlined,
+                color: Colors.white, size: 32),
+            if (confirmed)
+              Text(
+                translate('Send files to the remote device'),
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+                textAlign: TextAlign.center,
+              ).marginOnly(top: 8)
+            else
+              Text(
+                translate('Drop files to send them to the remote device'),
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+                textAlign: TextAlign.center,
+              ).marginOnly(top: 8),
+            if (confirmed)
+              TextField(
+                controller: _dropDirController,
+                autofocus: true,
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                decoration: InputDecoration(
+                  isDense: true,
+                  labelText: translate('Target directory'),
+                  labelStyle:
+                      const TextStyle(color: Colors.white70, fontSize: 13),
+                  hintText:
+                      translate('The current directory of the remote device'),
+                  hintStyle:
+                      const TextStyle(color: Colors.white38, fontSize: 13),
+                  enabledBorder: const UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white54)),
+                  focusedBorder: const UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white)),
+                ),
+                onSubmitted: (value) => _sendFilesToRemote(value.trim()),
+              ).marginOnly(top: 12)
+            else
+              Text(
+                _dropTargetDir.value.isEmpty
+                    ? translate('The current directory of the remote device')
+                    : _dropTargetDir.value,
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                textAlign: TextAlign.center,
+              ).marginOnly(top: 8),
+            if (confirmed)
+              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                TextButton(
+                  onPressed: _hideDropPanel,
+                  style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                  child: Text(translate('Cancel')),
+                ),
+                TextButton(
+                  onPressed: () =>
+                      _sendFilesToRemote(_dropDirController.text.trim()),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
+                  child: Text(translate('OK')),
+                ),
+              ]).marginOnly(top: 8),
+          ]),
+        ),
+      ),
+    );
   }
 
   /// Give the keyboard focus to the page, e.g. when its tab is selected while

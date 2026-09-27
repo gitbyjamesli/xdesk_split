@@ -77,9 +77,19 @@ class LocalFileToSend {
   }
 }
 
+/// A pending request to send local files to the peer, it is applied as soon as
+/// the [FileManagerPage] of the peer is created, see
+/// [FileManagerPage.sendLocalFiles].
+class _PendingSendFiles {
+  final List<LocalFileToSend> files;
+  final String? toPath;
+
+  const _PendingSendFiles(this.files, this.toPath);
+}
+
 /// Local files which are waiting for the file transfer page of the peer to be
-/// created, keyed by peer id, see [FileManagerPage.sendLocalFiles].
-final Map<String, List<LocalFileToSend>> pendingSendFiles = {};
+/// created, keyed by peer id.
+final Map<String, _PendingSendFiles> _pendingSendFiles = {};
 
 class FileManagerPage extends StatefulWidget {
   FileManagerPage(
@@ -90,7 +100,8 @@ class FileManagerPage extends StatefulWidget {
       this.tabController,
       this.connToken,
       this.forceRelay,
-      this.sendFiles})
+      this.sendFiles,
+      this.toPath})
       : super(key: key);
   final String id;
   final String? password;
@@ -102,23 +113,39 @@ class FileManagerPage extends StatefulWidget {
   /// Local files to send to the peer as soon as the session is ready.
   final List<LocalFileToSend>? sendFiles;
 
+  /// The remote directory which [sendFiles] are sent to, the remote directory
+  /// which is opened in this page is used when it is null or empty.
+  final String? toPath;
+
   final SimpleWrapper<State<FileManagerPage>?> _lastState = SimpleWrapper(null);
 
   FFI get ffi => (_lastState.value! as _FileManagerPageState)._ffi;
 
-  /// Send local files to the remote side.
+  /// The remote directory which is opened in this page, null when the peer is
+  /// not connected yet.
+  String? remoteDir() {
+    final state = _lastState.value;
+    if (state is _FileManagerPageState) {
+      return state.remoteDir();
+    }
+    return null;
+  }
+
+  /// Send local files to the remote side, e.g. the files which are dropped on a
+  /// remote session window, see [RemotePage].
   ///
-  /// Used when local files are dropped on a remote session window: the files
-  /// are sent as soon as the file transfer session is connected, the user may
-  /// have to input the password first.
-  void sendLocalFiles(List<LocalFileToSend> files) {
+  /// The files are sent as soon as the file transfer session is connected, the
+  /// user may have to input the password first. They go to [toPath], or to the
+  /// remote directory which is currently opened in this page when it is null or
+  /// empty.
+  void sendLocalFiles(List<LocalFileToSend> files, {String? toPath}) {
     if (files.isEmpty) return;
     final state = _lastState.value;
     if (state is _FileManagerPageState) {
-      state.sendLocalFiles(files);
+      state.sendLocalFiles(files, toPath: toPath);
     } else {
       // The state is not created yet, the files are sent when it is.
-      pendingSendFiles[id] = files;
+      _pendingSendFiles[id] = _PendingSendFiles(files, toPath);
     }
   }
 
@@ -169,10 +196,12 @@ class _FileManagerPageState extends State<FileManagerPage>
       widget.tabController?.onSelected?.call(widget.id);
     });
     WidgetsBinding.instance.addObserver(this);
-    final sendFiles =
-        widget.sendFiles ?? pendingSendFiles.remove(widget.id);
-    if (sendFiles != null && sendFiles.isNotEmpty) {
-      sendLocalFiles(sendFiles);
+    final sendFiles = widget.sendFiles;
+    final pending = sendFiles != null
+        ? _PendingSendFiles(sendFiles, widget.toPath)
+        : _pendingSendFiles.remove(widget.id);
+    if (pending != null && pending.files.isNotEmpty) {
+      sendLocalFiles(pending.files, toPath: pending.toPath);
     }
   }
 
@@ -191,12 +220,22 @@ class _FileManagerPageState extends State<FileManagerPage>
   @override
   bool get wantKeepAlive => true;
 
+  /// The remote directory which is opened in this page, null when the peer is
+  /// not connected yet.
+  String? remoteDir() {
+    final dir = model.remoteController.directory.value.path;
+    return dir.isEmpty ? null : dir;
+  }
+
   /// Send the local files [files] to the remote side.
   ///
   /// Used when local files are dropped on a remote session window: the files
   /// are sent as soon as the file transfer session is ready, because the
-  /// connected peer may have to input the password before.
-  Future<void> sendLocalFiles(List<LocalFileToSend> files) async {
+  /// connected peer may have to input the password before. They go to [toPath],
+  /// or to the remote directory which is currently opened in this page when it
+  /// is null or empty.
+  Future<void> sendLocalFiles(List<LocalFileToSend> files,
+      {String? toPath}) async {
     if (files.isEmpty) return;
     // Wait for the remote directory which is set once the peer is connected.
     for (var i = 0; i < 300 && mounted; i++) {
@@ -205,10 +244,13 @@ class _FileManagerPageState extends State<FileManagerPage>
       }
       await Future.delayed(const Duration(milliseconds: 100));
     }
-    if (!mounted || model.remoteController.directory.value.path.isEmpty) {
+    if (!mounted) return;
+    final remoteDir = model.remoteController.directory.value.path;
+    if (remoteDir.isEmpty) {
       debugPrint('Failed to send files, the session is not ready');
       return;
     }
+    final target = toPath != null && toPath.isNotEmpty ? toPath : remoteDir;
     final items = SelectedItems(isLocal: true);
     for (final file in files) {
       final entry = _localEntry(file);
@@ -218,7 +260,10 @@ class _FileManagerPageState extends State<FileManagerPage>
     }
     if (items.items.isEmpty) return;
     final otherSideData = model.remoteController.directoryData();
-    model.localController.sendFiles(items, otherSideData);
+    model.localController.sendFiles(
+        items,
+        DirectoryData(
+            FileDirectory()..path = target, otherSideData.options));
   }
 
   Entry? _localEntry(LocalFileToSend file) {

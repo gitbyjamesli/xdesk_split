@@ -77,8 +77,13 @@ const String kWindowEventSetFullscreen = "set_fullscreen";
 const String kWindowEventMoveTabToNewWindow = "move_tab_to_new_window";
 const String kWindowEventGetCachedSessionData = "get_cached_session_data";
 const String kWindowEventOpenMonitorSession = "open_monitor_session";
-// Send local files (dropped on a session window) to a peer, see [RemotePage].
-const String kWindowEventSendFilesToPeer = "send_files_to_peer";
+// Ask the file transfer window of a peer for the remote directory which is
+// opened there, the result of the call is the directory, see [RemotePage].
+const String kWindowEventGetFilesTargetDir = "get_files_target_dir";
+// Send local files which are dropped on a session window to a peer, they are
+// sent to the given remote directory, see [RemotePage].
+const String kWindowEventSendFilesToPeerWithTargetDir =
+    "send_files_to_peer_with_target_dir";
 
 const String kOptionViewStyle = "view_style";
 const String kOptionScrollStyle = "scroll_style";

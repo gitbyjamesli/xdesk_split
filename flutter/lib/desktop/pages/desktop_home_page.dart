@@ -866,22 +866,38 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           await rustDeskWinManager.moveTabToNewWindow(
               windowId, args[1], args[2], windowType);
         }
-      } else if (call.method == kWindowEventSendFilesToPeer) {
+      } else if (call.method == kWindowEventGetFilesTargetDir) {
+        // Files which are dropped on a session window are sent by the file
+        // transfer window, ask it for the remote directory which the user has
+        // opened there, it is the default target directory of the files.
+        final res = await rustDeskWinManager.call(
+            WindowType.FileTransfer, kWindowEventGetFilesTargetDir,
+            call.arguments);
+        return res.result;
+      } else if (call.method == kWindowEventSendFilesToPeerWithTargetDir) {
         final args = jsonDecode(call.arguments);
         final id = args['id'];
         if (id is String) {
-          // Open (or reuse) the file transfer window of the peer. The files ride
-          // along with the window parameters, so that both a new and an already
-          // opened file transfer window can pick them up.
-          await rustDeskWinManager.newFileTransfer(
-            id,
-            password: args['password'],
-            isSharedPassword: args['isSharedPassword'],
-            forceRelay: args['forceRelay'],
-            sendFiles: (args['files'] as List?)
-                ?.map((e) => Map<String, dynamic>.from(e as Map))
-                .toList(),
-          );
+          // The file transfer window of the peer has already a session, it
+          // sends the files to the given directory.
+          final res = await rustDeskWinManager.call(
+              WindowType.FileTransfer,
+              kWindowEventSendFilesToPeerWithTargetDir,
+              call.arguments);
+          if (res.windowId == kInvalidWindowId) {
+            // No file transfer window yet, open it, the files are sent as soon
+            // as its session is connected.
+            await rustDeskWinManager.newFileTransfer(
+              id,
+              password: args['password'],
+              isSharedPassword: args['isSharedPassword'],
+              forceRelay: args['forceRelay'],
+              sendFiles: (args['files'] as List?)
+                  ?.map((e) => Map<String, dynamic>.from(e as Map))
+                  .toList(),
+              toPath: args['toPath'] as String?,
+            );
+          }
         }
       } else if (call.method == kWindowEventOpenMonitorSession) {
         final args = jsonDecode(call.arguments);
