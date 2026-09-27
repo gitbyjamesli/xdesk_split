@@ -4574,24 +4574,6 @@ ProcessId=10136
 
 static LAST_OPENED_DIR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-/// Convert a window handle into a comparable value, the shell returns it as a
-/// number or as a typed handle, depending on the interface.
-trait IntoHandle {
-    fn into_handle(self) -> usize;
-}
-
-impl IntoHandle for i32 {
-    fn into_handle(self) -> usize {
-        self as usize
-    }
-}
-
-impl IntoHandle for windows::Win32::Foundation::HWND {
-    fn into_handle(self) -> usize {
-        self.0 as usize
-    }
-}
-
 /// The local path of a folder url, e.g. `file:///C:/work/` -> `C:\work`.
 fn dir_from_url(url: &str) -> Option<String> {
     let path = url::Url::parse(url).ok()?.to_file_path().ok()?;
@@ -4657,7 +4639,7 @@ pub fn last_opened_dir() -> Option<String> {
                         Err(_) => continue,
                     };
                     let focused = match browser.HWND() {
-                        Ok(hwnd) => hwnd.into_handle() as u32 == foreground as u32,
+                        Ok(hwnd) => hwnd.0 as usize as u32 == foreground as u32,
                         Err(_) => false,
                     };
                     if focused {
