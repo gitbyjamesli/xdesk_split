@@ -4609,13 +4609,19 @@ pub fn last_opened_dir() -> Option<String> {
                         Err(_) => continue,
                     };
                     let url = match browser.LocationURL() {
-                        Ok(url) => url.to_string(),
+                        Ok(url) => format!("{}", url),
                         Err(_) => continue,
                     };
                     if let Ok(url) = url::Url::parse(&url) {
                         if let Ok(path) = url.to_file_path() {
                             if let Some(path) = path.to_str() {
-                                return Some(path.to_string());
+                                // A folder url ends with a separator, the
+                                // controlling side shows the path, drop it.
+                                let mut path = path.to_string();
+                                while path.len() > 3 && path.ends_with(std::path::MAIN_SEPARATOR) {
+                                    path.pop();
+                                }
+                                return Some(path);
                             }
                         }
                     }
