@@ -113,6 +113,9 @@ class _RemotePageState extends State<RemotePage>
   // The remote directory which the file transfer window has opened.
   final _dropTargetDir = ''.obs;
   final TextEditingController _dropDirController = TextEditingController();
+  // The directory which the peer opens by default, asked once per session.
+  String _peerDefaultDir = '';
+  bool _peerDefaultDirQueried = false;
 
   // Debounce timer for pointer lock center updates during window events.
   // Uses kDefaultPointerLockCenterThrottleMs from consts.dart for the duration.
@@ -540,7 +543,9 @@ class _RemotePageState extends State<RemotePage>
   /// Ask the file transfer window of the peer for the remote directory which is
   /// opened there, it is the default target directory of the dropped files.
   Future<void> _queryDropTargetDir() async {
-    final dir = await _getDropTargetDir();
+    // Prefer the directory which is opened in the file transfer window of the
+    // peer, fall back to the directory which the peer opens by default.
+    final dir = await _getDropTargetDir() ?? await _getPeerDefaultDir();
     if (!mounted || dir == null) return;
     _dropTargetDir.value = dir;
     if (_dropPanelVisible.value && _dropDirController.text.isEmpty) {
@@ -558,6 +563,37 @@ class _RemotePageState extends State<RemotePage>
       debugPrint('Failed to get the target directory of the dropped files: $e');
       return null;
     }
+  }
+
+  /// The directory which the peer opens by default, e.g. its home directory.
+  ///
+  /// It is read from the peer with the same request which the file transfer
+  /// window sends when its session is connected, so that the files which are
+  /// dropped on this page have a sensible target directory even when no file
+  /// transfer window is opened yet. The peer may not answer it (older peer, no
+  /// file transfer permission), in that case the target directory is left empty
+  /// and the file transfer window decides.
+  Future<String?> _getPeerDefaultDir() async {
+    if (_peerDefaultDir.isNotEmpty) return _peerDefaultDir;
+    if (_peerDefaultDirQueried) return null;
+    _peerDefaultDirQueried = true;
+    final options = _ffi.fileModel.remoteController.options;
+    if (options.value.home.isEmpty) {
+      bind.sessionReadRemoteDir(
+          sessionId: _ffi.sessionId, path: '', includeHidden: false);
+      for (var i = 0; i < 30; i++) {
+        if (!mounted) return null;
+        if (options.value.home.isNotEmpty) {
+          break;
+        }
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+    }
+    if (options.value.home.isNotEmpty) {
+      _peerDefaultDir = options.value.home;
+      return _peerDefaultDir;
+    }
+    return null;
   }
 
   /// Show the drop panel, the files are sent by the file transfer window when

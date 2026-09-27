@@ -2872,10 +2872,24 @@ impl Connection {
                 Some(message::Union::FileAction(fa)) => {
                     let mut handle_fa = self.file_transfer.is_some();
                     if !handle_fa {
-                        if let Some(file_action::Union::Send(s)) = fa.union.as_ref() {
-                            if JobType::from_proto(s.file_type) == JobType::Printer {
-                                handle_fa = true;
+                        match fa.union.as_ref() {
+                            Some(file_action::Union::Send(s)) => {
+                                if JobType::from_proto(s.file_type) == JobType::Printer {
+                                    handle_fa = true;
+                                }
                             }
+                            // The default directory of the peer. The controlling
+                            // side reads an empty path to know where to put the
+                            // files which are dropped on a session, see
+                            // `read_dir` and `session_read_remote_dir`. Only the
+                            // default directory is answered this way and the
+                            // file transfer permission is required.
+                            Some(file_action::Union::ReadDir(rd)) => {
+                                if rd.path.is_empty() && self.file_transfer_enabled() {
+                                    handle_fa = true;
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     if handle_fa {
