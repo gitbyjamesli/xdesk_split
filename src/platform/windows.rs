@@ -4571,3 +4571,68 @@ ProcessId=10136
         assert_eq!(pids.len(), 0);
     }
 }
+
+static LAST_OPENED_DIR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The folder which the user has opened, e.g. in Explorer, most recently.
+///
+/// The controlling side asks for it to use it as the target directory of the
+/// files which are dropped on a session, see
+/// `crate::server::connection::Connection`. The last found folder is kept, so
+/// that closing the folder does not lose it. Returns `None` when no folder was
+/// seen yet, e.g. when no user is logged in.
+pub fn last_opened_dir() -> Option<String> {
+    use windows::core::Interface;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::System::Variant::VARIANT;
+    use windows::Win32::UI::Shell::{IShellWindows, IWebBrowser2, ShellWindows};
+
+    let dir = (|| -> Option<String> {
+        unsafe {
+            // Shell windows can only be enumerated from a thread which has
+            // OLE initialized and the shell is an apartment threaded object.
+            let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).0 == 0;
+            let res = (|| -> Option<String> {
+                let windows: IShellWindows =
+                    CoCreateInstance(&ShellWindows, None, CLSCTX_ALL).ok()?;
+                let count = windows.Count().ok()?;
+                for i in 0..count {
+                    // The first one is the folder which was active last.
+                    let item = match windows.Item(&VARIANT::from(i)) {
+                        Ok(item) => item,
+                        Err(_) => continue,
+                    };
+                    let browser: IWebBrowser2 = match item.cast() {
+                        Ok(browser) => browser,
+                        Err(_) => continue,
+                    };
+                    let url = match browser.LocationURL() {
+                        Ok(url) => url.to_string(),
+                        Err(_) => continue,
+                    };
+                    if let Ok(url) = url::Url::parse(&url) {
+                        if let Ok(path) = url.to_file_path() {
+                            if let Some(path) = path.to_str() {
+                                return Some(path.to_string());
+                            }
+                        }
+                    }
+                }
+                None
+            })();
+            if initialized {
+                CoUninitialize();
+            }
+            res
+        }
+    })();
+    let mut last = LAST_OPENED_DIR
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(dir) = dir {
+        *last = Some(dir);
+    }
+    last.clone()
+}

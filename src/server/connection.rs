@@ -2930,7 +2930,15 @@ impl Connection {
                                 self.read_empty_dirs(&rd.path, rd.include_hidden);
                             }
                             Some(file_action::Union::ReadDir(rd)) => {
-                                self.read_dir(&rd.path, rd.include_hidden);
+                                // The folder which the user has opened is used
+                                // as the target directory of the files which are
+                                // dropped on a session, see `send_last_opened_dir`.
+                                let answered = self.file_transfer.is_none()
+                                    && rd.path.is_empty()
+                                    && self.send_last_opened_dir().await;
+                                if !answered {
+                                    self.read_dir(&rd.path, rd.include_hidden);
+                                }
                             }
                             Some(file_action::Union::AllFiles(f)) => {
                                 if crate::common::need_fs_cm_send_files() {
@@ -4547,6 +4555,32 @@ impl Connection {
             dir,
             include_hidden,
         });
+    }
+
+    /// Answer the folder which the user has opened, e.g. in Explorer, it is used
+    /// as the target directory of the files which are dropped on a session.
+    /// Returns whether it was answered, the default directory of the peer is
+    /// read then, see `read_dir`.
+    #[cfg(target_os = "windows")]
+    async fn send_last_opened_dir(&mut self) -> bool {
+        match crate::platform::last_opened_dir() {
+            Some(dir) => {
+                let mut fd = FileDirectory::new();
+                fd.path = dir;
+                let mut fr = FileResponse::new();
+                fr.set_dir(fd);
+                let mut msg = Message::new();
+                msg.set_file_response(fr);
+                self.send(msg).await;
+                true
+            }
+            None => false,
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    async fn send_last_opened_dir(&mut self) -> bool {
+        false
     }
 
     /// Create a new read job and start processing it (Connection-side).
