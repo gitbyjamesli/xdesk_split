@@ -91,6 +91,52 @@ class _PendingSendFiles {
 /// created, keyed by peer id.
 final Map<String, _PendingSendFiles> _pendingSendFiles = {};
 
+/// A remote file which is downloaded into a local directory, e.g. it is dragged
+/// out of a remote session window, see [FileManagerPage.downloadFromRemote].
+class RemoteFileToDownload {
+  const RemoteFileToDownload(
+      {required this.path,
+      required this.name,
+      required this.size,
+      required this.entryType});
+
+  final String path;
+  final String name;
+  final int size;
+  final int entryType;
+
+  static List<RemoteFileToDownload> listFromJson(dynamic list) {
+    final files = <RemoteFileToDownload>[];
+    if (list is List) {
+      for (final item in list) {
+        if (item is Map) {
+          files.add(RemoteFileToDownload(
+            path: item['path']?.toString() ?? '',
+            name: item['name']?.toString() ?? '',
+            size: int.tryParse(item['size']?.toString() ?? '') ?? 0,
+            entryType: int.tryParse(item['entry_type']?.toString() ?? '') ?? 4,
+          ));
+        }
+      }
+    }
+    return files;
+  }
+}
+
+/// A pending request to download remote files into a local directory, it is
+/// applied as soon as the [FileManagerPage] of the peer is created, see
+/// [FileManagerPage.downloadFromRemote].
+class _PendingDownload {
+  final List<RemoteFileToDownload> files;
+  final String? toLocalDir;
+
+  const _PendingDownload(this.files, this.toLocalDir);
+}
+
+/// Remote files which are waiting for the file transfer page of the peer to be
+/// created, keyed by peer id.
+final Map<String, _PendingDownload> _pendingDownloads = {};
+
 class FileManagerPage extends StatefulWidget {
   FileManagerPage(
       {Key? key,
@@ -101,7 +147,9 @@ class FileManagerPage extends StatefulWidget {
       this.connToken,
       this.forceRelay,
       this.sendFiles,
-      this.toPath})
+      this.toPath,
+      this.downloadFiles,
+      this.toLocalDir})
       : super(key: key);
   final String id;
   final String? password;
@@ -116,6 +164,14 @@ class FileManagerPage extends StatefulWidget {
   /// The remote directory which [sendFiles] are sent to, the remote directory
   /// which is opened in this page is used when it is null or empty.
   final String? toPath;
+
+  /// Remote files to download into the local device as soon as the session is
+  /// ready.
+  final List<RemoteFileToDownload>? downloadFiles;
+
+  /// The local directory which [downloadFiles] are downloaded to, the local
+  /// directory which is opened in this page is used when it is null or empty.
+  final String? toLocalDir;
 
   final SimpleWrapper<State<FileManagerPage>?> _lastState = SimpleWrapper(null);
 
@@ -146,6 +202,25 @@ class FileManagerPage extends StatefulWidget {
     } else {
       // The state is not created yet, the files are sent when it is.
       _pendingSendFiles[id] = _PendingSendFiles(files, toPath);
+    }
+  }
+
+  /// Download the remote [files] into the local device, e.g. the files which are
+  /// dragged out of a remote session window, see [RemotePage].
+  ///
+  /// The files are downloaded as soon as the file transfer session is connected,
+  /// the user may have to input the password first. They go to [toLocalDir], or
+  /// to the local directory which is currently opened in this page when it is
+  /// null or empty.
+  void downloadFromRemote(List<RemoteFileToDownload> files,
+      {String? toLocalDir}) {
+    if (files.isEmpty) return;
+    final state = _lastState.value;
+    if (state is _FileManagerPageState) {
+      state.downloadFromRemote(files, toLocalDir: toLocalDir);
+    } else {
+      // The state is not created yet, the files are downloaded when it is.
+      _pendingDownloads[id] = _PendingDownload(files, toLocalDir);
     }
   }
 
@@ -202,6 +277,14 @@ class _FileManagerPageState extends State<FileManagerPage>
         : _pendingSendFiles.remove(widget.id);
     if (pending != null && pending.files.isNotEmpty) {
       sendLocalFiles(pending.files, toPath: pending.toPath);
+    }
+    final downloadFiles = widget.downloadFiles;
+    final pendingDownload = downloadFiles != null
+        ? _PendingDownload(downloadFiles, widget.toLocalDir)
+        : _pendingDownloads.remove(widget.id);
+    if (pendingDownload != null && pendingDownload.files.isNotEmpty) {
+      downloadFromRemote(pendingDownload.files,
+          toLocalDir: pendingDownload.toLocalDir);
     }
   }
 
@@ -261,6 +344,42 @@ class _FileManagerPageState extends State<FileManagerPage>
     if (items.items.isEmpty) return;
     final otherSideData = model.remoteController.directoryData();
     model.localController.sendFiles(
+        items,
+        DirectoryData(
+            FileDirectory()..path = target, otherSideData.options));
+  }
+
+  /// Download the remote [files] into [toLocalDir], see
+  /// [FileManagerPage.downloadFromRemote].
+  Future<void> downloadFromRemote(List<RemoteFileToDownload> files,
+      {String? toLocalDir}) async {
+    if (files.isEmpty) return;
+    // Wait for the local directory which is set when the page is ready.
+    for (var i = 0; i < 300 && mounted; i++) {
+      if (model.localController.directory.value.path.isNotEmpty) {
+        break;
+      }
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    if (!mounted) return;
+    final localDir = model.localController.directory.value.path;
+    final target =
+        toLocalDir != null && toLocalDir.isNotEmpty ? toLocalDir : localDir;
+    if (target.isEmpty) {
+      debugPrint('Failed to download files, the page is not ready');
+      return;
+    }
+    final items = SelectedItems(isLocal: false);
+    for (final file in files) {
+      items.add(Entry()
+        ..path = file.path
+        ..name = file.name
+        ..entryType = file.entryType
+        ..size = file.size);
+    }
+    if (items.items.isEmpty) return;
+    final otherSideData = model.localController.directoryData();
+    model.remoteController.sendFiles(
         items,
         DirectoryData(
             FileDirectory()..path = target, otherSideData.options));

@@ -899,6 +899,31 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             );
           }
         }
+      } else if (call.method == kWindowEventDownloadFilesToLocal) {
+        final args = jsonDecode(call.arguments);
+        final id = args['id'];
+        if (id is String) {
+          // The file transfer window of the peer has already a session, it
+          // downloads the files into the given local directory.
+          final res = await rustDeskWinManager.call(
+              WindowType.FileTransfer,
+              kWindowEventDownloadFilesToLocal,
+              call.arguments);
+          if (res.windowId == kInvalidWindowId) {
+            // No file transfer window yet, open it, the files are downloaded as
+            // soon as its session is connected.
+            await rustDeskWinManager.newFileTransfer(
+              id,
+              password: args['password'],
+              isSharedPassword: args['isSharedPassword'],
+              forceRelay: args['forceRelay'],
+              downloadFiles: (args['files'] as List?)
+                  ?.map((e) => Map<String, dynamic>.from(e as Map))
+                  .toList(),
+              toLocalDir: args['toLocalDir'] as String?,
+            );
+          }
+        }
       } else if (call.method == kWindowEventOpenMonitorSession) {
         final args = jsonDecode(call.arguments);
         final windowId = args['window_id'] as int;

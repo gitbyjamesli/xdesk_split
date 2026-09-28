@@ -232,6 +232,8 @@ class RustDeskMultiWindowManager {
     String? connToken,
     List<Map<String, dynamic>>? sendFiles,
     String? toPath,
+    List<Map<String, dynamic>>? downloadFiles,
+    String? toLocalDir,
   }) async {
     var params = {
       "type": type.index,
@@ -259,6 +261,15 @@ class RustDeskMultiWindowManager {
     if (toPath != null) {
       // The remote directory which the files are sent to.
       params['to_path'] = toPath;
+    }
+    if (downloadFiles != null) {
+      // Remote files which are downloaded as soon as the file transfer window
+      // (or tab) is ready, see [RemotePage].
+      params['download_files'] = downloadFiles;
+    }
+    if (toLocalDir != null) {
+      // The local directory which the files are downloaded to.
+      params['to_local_dir'] = toLocalDir;
     }
     final msg = jsonEncode(params);
 
@@ -305,6 +316,8 @@ class RustDeskMultiWindowManager {
     String? connToken,
     List<Map<String, dynamic>>? sendFiles,
     String? toPath,
+    List<Map<String, dynamic>>? downloadFiles,
+    String? toLocalDir,
   }) async {
     return await newSession(
       WindowType.FileTransfer,
@@ -317,6 +330,8 @@ class RustDeskMultiWindowManager {
       connToken: connToken,
       sendFiles: sendFiles,
       toPath: toPath,
+      downloadFiles: downloadFiles,
+      toLocalDir: toLocalDir,
     );
   }
 

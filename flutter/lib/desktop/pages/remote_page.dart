@@ -116,6 +116,20 @@ class _RemotePageState extends State<RemotePage>
   // The directory which the peer has opened, asked again for every drop.
   String _peerDefaultDir = '';
 
+  // The remote files which are dragged out of this page, they are downloaded
+  // after the local directory is confirmed in the download panel.
+  final _downloadPanelVisible = false.obs;
+  final _downloadFiles = <Map<String, dynamic>>[];
+  final TextEditingController _downloadDirController = TextEditingController();
+  // The local directory which was used last time, the default of the download
+  // panel. It is kept in memory, it is empty until something is downloaded.
+  static String _lastLocalDir = '';
+  // The drag which may download the remote files which are selected in the peer,
+  // see _buildDragOutDetector.
+  bool _dragOutPressed = false;
+  bool _dragOutTriggered = false;
+  double _dragOutMoved = 0;
+
   // Debounce timer for pointer lock center updates during window events.
   // Uses kDefaultPointerLockCenterThrottleMs from consts.dart for the duration.
   Timer? _pointerLockCenterDebounceTimer;
@@ -357,6 +371,7 @@ class _RemotePageState extends State<RemotePage>
     _ffi.cursorModel.disposeImages();
     _rawKeyFocusNode.dispose();
     _dropDirController.dispose();
+    _downloadDirController.dispose();
     await _ffi.close(closeSession: closeSession);
     _timer?.cancel();
     _ffi.dialogManager.dismissAll();
@@ -510,7 +525,7 @@ class _RemotePageState extends State<RemotePage>
           ChangeNotifierProvider.value(value: _ffi.cursorModel),
           ChangeNotifierProvider.value(value: _ffi.canvasModel),
           ChangeNotifierProvider.value(value: _ffi.recordingModel),
-        ], child: buildBody(context))));
+        ], child: _buildDragOutDetector(child: buildBody(context)))));
   }
 
   /// Accept files dragged from the local desktop and transfer them to the peer
@@ -534,7 +549,192 @@ class _RemotePageState extends State<RemotePage>
           Obx(() => (_dropMaskVisible.value || _dropPanelVisible.value)
               ? Positioned.fill(child: _buildDropMask())
               : const SizedBox.shrink()),
+          Obx(() => _downloadPanelVisible.value
+              ? Positioned.fill(child: _buildDownloadPanel())
+              : const SizedBox.shrink()),
         ],
+      ),
+    );
+  }
+
+  /// Watch for a drag which leaves the window, it downloads the remote files
+  /// which are selected in the peer, see _startDownload.
+  Widget _buildDragOutDetector({required Widget child}) {
+    if (isWeb) return child;
+    return Listener(
+      onPointerDown: (event) {
+        // 0x01 is kPrimaryButton of the flutter gestures library.
+        _dragOutPressed = event.buttons & 0x01 != 0;
+        _dragOutTriggered = false;
+        _dragOutMoved = 0;
+      },
+      onPointerMove: (event) {
+        if (!_dragOutPressed || _dragOutTriggered) return;
+        _dragOutMoved += event.delta.distance;
+        if (_dragOutMoved < 30) return;
+        final size = MediaQuery.sizeOf(context);
+        final pos = event.position;
+        if (pos.dx < 0 ||
+            pos.dy < 0 ||
+            pos.dx > size.width ||
+            pos.dy > size.height) {
+          _dragOutTriggered = true;
+          _startDownload();
+        }
+      },
+      onPointerUp: (_) {
+        _dragOutPressed = false;
+        _dragOutTriggered = false;
+      },
+      onPointerCancel: (_) {
+        _dragOutPressed = false;
+        _dragOutTriggered = false;
+      },
+      child: child,
+    );
+  }
+
+  /// Take the remote files which are selected in the peer and show the panel
+  /// which asks for the local directory.
+  Future<void> _startDownload() async {
+    if (_downloadPanelVisible.value) return;
+    final files = await _queryPeerSelectedItems();
+    if (!mounted || files.isEmpty) return;
+    _downloadFiles
+      ..clear()
+      ..addAll(files);
+    _downloadDirController.text = _lastLocalDir;
+    _downloadPanelVisible.value = true;
+  }
+
+  /// The remote files which are selected in the peer, read with the query which
+  /// the peer answers for a session, see `send_selected_items`.
+  Future<List<Map<String, dynamic>>> _queryPeerSelectedItems() async {
+    final remote = _ffi.fileModel.remoteController;
+    // The peer answers the folder which is opened there together with the items,
+    // the reply is only taken by the model when the home directory is empty.
+    remote.options.value.home = '';
+    remote.directory.value.entries.clear();
+    bind.sessionReadRemoteDir(
+        sessionId: _ffi.sessionId,
+        path: kPeerSelectedItemsQuery,
+        includeHidden: false);
+    for (var i = 0; i < 10; i++) {
+      if (!mounted) return const [];
+      if (remote.directory.value.entries.isNotEmpty) break;
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    if (!mounted) return const [];
+    final dir = remote.directory.value.path;
+    final separator = remote.options.value.isWindows ? '\\' : '/';
+    final files = <Map<String, dynamic>>[];
+    for (final entry in remote.directory.value.entries) {
+      final name = entry.name;
+      if (name.isEmpty) continue;
+      final path = dir.isEmpty || dir.endsWith(separator)
+          ? '$dir$name'
+          : '$dir$separator$name';
+      files.add({
+        'path': path,
+        'name': name,
+        'size': entry.size,
+        'entry_type': entry.entryType,
+      });
+    }
+    return files;
+  }
+
+  void _hideDownloadPanel() {
+    _downloadPanelVisible.value = false;
+    _downloadFiles.clear();
+    _rawKeyFocusNode.requestFocus();
+  }
+
+  /// Download the remote files which were dragged out into [toLocalDir] through
+  /// the file transfer window.
+  Future<void> _startDownloadTo(String toLocalDir) async {
+    final dir = toLocalDir.trim();
+    if (dir.isEmpty || _downloadFiles.isEmpty) return;
+    _lastLocalDir = dir;
+    final files = List<Map<String, dynamic>>.from(_downloadFiles);
+    _hideDownloadPanel();
+    try {
+      await rustDeskWinManager.call(
+          WindowType.Main,
+          kWindowEventDownloadFilesToLocal,
+          jsonEncode({
+            'id': widget.id,
+            'password': widget.params['password'],
+            'isSharedPassword': widget.params['isSharedPassword'],
+            'forceRelay': widget.params['forceRelay'],
+            'files': files,
+            'toLocalDir': dir,
+          }));
+    } catch (e) {
+      debugPrint('Failed to download the files of the remote device: $e');
+    }
+  }
+
+  /// The panel which asks for the local directory of the files which are dragged
+  /// out of this page.
+  Widget _buildDownloadPanel() {
+    return Container(
+      color: Colors.transparent,
+      alignment: Alignment.center,
+      child: Material(
+        color: Colors.black54,
+        borderRadius: const BorderRadius.all(Radius.circular(8)),
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 320, maxWidth: 480),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.download, color: Colors.white, size: 32),
+              const SizedBox(height: 8),
+              Text(
+                translate('Download to the local device'),
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _downloadFiles.length == 1
+                    ? _downloadFiles.first['name'].toString()
+                    : '${_downloadFiles.length}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _downloadDirController,
+                autofocus: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: translate('Local directory'),
+                  labelStyle: const TextStyle(color: Colors.white70),
+                  hintText: translate('The directory which was used last time'),
+                  hintStyle: const TextStyle(color: Colors.white38),
+                ),
+                onSubmitted: (value) => _startDownloadTo(value),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: _hideDownloadPanel,
+                    child: Text(translate('Cancel')),
+                  ),
+                  TextButton(
+                    onPressed: () =>
+                        _startDownloadTo(_downloadDirController.text),
+                    child: Text(translate('OK')),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -67,6 +67,12 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use crate::virtual_display_manager;
 pub type Sender = mpsc::UnboundedSender<(Instant, Arc<Message>)>;
 
+/// The path which the controlling side reads to know which items are selected in
+/// the folder window which has the focus of the peer, see
+/// `Connection::send_selected_items`. It is read with a file action, so that no
+/// new message is needed, and can not collide with a real path.
+const XDESK_SELECTED_ITEMS_QUERY: &str = "xdesk://selected-items";
+
 lazy_static::lazy_static! {
     static ref LOGIN_FAILURES: [Arc::<Mutex<HashMap<String, (i32, i32, i32)>>>; 2] = Default::default();
     static ref SESSIONS: Arc::<Mutex<HashMap<SessionKey, Session>>> = Default::default();
@@ -2930,13 +2936,21 @@ impl Connection {
                                 self.read_empty_dirs(&rd.path, rd.include_hidden);
                             }
                             Some(file_action::Union::ReadDir(rd)) => {
-                                // The folder which the user has opened is used
-                                // as the target directory of the files which are
-                                // dropped on a session, see `send_last_opened_dir`.
-                                let answered = self.file_transfer.is_none()
+                                // The items which are selected in the folder
+                                // window which has the focus of the peer, they
+                                // are the items which the user drags out of the
+                                // session, see `send_selected_items`.
+                                let read_selected_items = self.file_transfer.is_none()
+                                    && rd.path == XDESK_SELECTED_ITEMS_QUERY;
+                                if read_selected_items {
+                                    self.send_selected_items().await;
+                                } else if self.file_transfer.is_none()
                                     && rd.path.is_empty()
-                                    && self.send_last_opened_dir().await;
-                                if !answered {
+                                    && self.send_last_opened_dir().await
+                                {
+                                    // The folder which the user has opened was
+                                    // answered, nothing left to do.
+                                } else {
                                     self.read_dir(&rd.path, rd.include_hidden);
                                 }
                             }
@@ -4582,6 +4596,57 @@ impl Connection {
     async fn send_last_opened_dir(&mut self) -> bool {
         false
     }
+
+    /// Answer the items which are selected in the folder window which has the
+    /// focus of the peer, the controlling side downloads them when the user
+    /// drags them out of a session.
+    #[cfg(target_os = "windows")]
+    async fn send_selected_items(&mut self) {
+        let selected = match crate::platform::focused_selected_items() {
+            Some(selected) => selected,
+            None => return,
+        };
+        let mut fd = FileDirectory::new();
+        fd.path = selected.0;
+        for path in selected.1 {
+            let mut entry = hbb_common::message_proto::FileEntry::new();
+            entry.name = std::path::Path::new(&path)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            match std::fs::metadata(&path) {
+                Ok(meta) if meta.is_dir() => {
+                    entry.entry_type =
+                        EnumOrUnknown::new(hbb_common::message_proto::FileType::Dir);
+                }
+                Ok(meta) => {
+                    entry.entry_type =
+                        EnumOrUnknown::new(hbb_common::message_proto::FileType::File);
+                    entry.size = meta.len();
+                }
+                Err(_) => continue,
+            }
+            if entry.name.is_empty() {
+                continue;
+            }
+            fd.entries.push(entry);
+        }
+        if fd.entries.is_empty() {
+            return;
+        }
+        // The Explorer of the peer started a shell drag when the items were
+        // dragged out of the session, cancel it, otherwise it hangs and is
+        // dropped later when the button is pressed again.
+        crate::platform::cancel_drag();
+        let mut fr = FileResponse::new();
+        fr.set_dir(fd);
+        let mut msg = Message::new();
+        msg.set_file_response(fr);
+        self.send(msg).await;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    async fn send_selected_items(&mut self) {}
 
     /// Create a new read job and start processing it (Connection-side).
     ///

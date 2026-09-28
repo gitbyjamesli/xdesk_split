@@ -80,6 +80,12 @@ const String kWindowEventOpenMonitorSession = "open_monitor_session";
 // Ask the file transfer window of a peer for the remote directory which is
 // opened there, the result of the call is the directory, see [RemotePage].
 const String kWindowEventGetFilesTargetDir = "get_files_target_dir";
+const String kWindowEventDownloadFilesToLocal = "download_files_to_local";
+
+// The query which reads the items which are selected in the folder window which
+// has the focus of the peer, it is read with a file action, so that no new
+// message is needed. It has to match `XDESK_SELECTED_ITEMS_QUERY`.
+const String kPeerSelectedItemsQuery = "xdesk://selected-items";
 // Send local files which are dropped on a session window to a peer, they are
 // sent to the given remote directory, see [RemotePage].
 const String kWindowEventSendFilesToPeerWithTargetDir =

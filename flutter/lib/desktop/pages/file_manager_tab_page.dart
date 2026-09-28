@@ -38,12 +38,17 @@ class _FileManagerTabPageState extends State<FileManagerTabPage> {
     tabController.onRemoved = (_, id) => onRemoveId(id);
     addFileTransferTab(params['id'], params,
         sendFiles: LocalFileToSend.listFromJson(params['send_files']),
-        toPath: params['to_path'] as String?);
+        toPath: params['to_path'] as String?,
+        downloadFiles: RemoteFileToDownload.listFromJson(params['download_files']),
+        toLocalDir: params['to_local_dir'] as String?);
   }
 
   /// Add the tab of the peer, which connects the file transfer session.
   void addFileTransferTab(dynamic id, Map<String, dynamic> args,
-      {List<LocalFileToSend> sendFiles = const [], String? toPath}) {
+      {List<LocalFileToSend> sendFiles = const [],
+      List<RemoteFileToDownload> downloadFiles = const [],
+      String? toPath,
+      String? toLocalDir}) {
     tabController.add(TabInfo(
         key: id,
         label: id,
@@ -68,6 +73,8 @@ class _FileManagerTabPageState extends State<FileManagerTabPage> {
           connToken: args['connToken'],
           sendFiles: sendFiles,
           toPath: toPath,
+          downloadFiles: downloadFiles,
+          toLocalDir: toLocalDir,
         )));
   }
 
@@ -118,6 +125,24 @@ class _FileManagerTabPageState extends State<FileManagerTabPage> {
           // soon as its session is connected.
           windowOnTop(windowId());
           addFileTransferTab(id, args, sendFiles: sendFiles, toPath: toPath);
+        }
+      } else if (call.method == kWindowEventDownloadFilesToLocal) {
+        final args = jsonDecode(call.arguments);
+        final id = args['id'];
+        final downloadFiles = RemoteFileToDownload.listFromJson(args['files']);
+        final toLocalDir = args['toLocalDir'] as String?;
+        if (tabController.state.value.tabs.any((tab) => tab.key == id)) {
+          final page = tabController.widget(id);
+          if (page is FileManagerPage) {
+            windowOnTop(windowId());
+            page.downloadFromRemote(downloadFiles, toLocalDir: toLocalDir);
+          }
+        } else {
+          // The peer has no tab in this window, add it, the files are
+          // downloaded as soon as its session is connected.
+          windowOnTop(windowId());
+          addFileTransferTab(id, args,
+              downloadFiles: downloadFiles, toLocalDir: toLocalDir);
         }
       } else if (call.method == "onDestroy") {
         tabController.clear();

@@ -4663,3 +4663,103 @@ pub fn last_opened_dir() -> Option<String> {
     }
     last.clone().or(any_dir)
 }
+
+/// Cancel a drag which the user does in the session of the peer, e.g. the shell
+/// drag which the Explorer started when items are dragged out of the session.
+/// Without it the drag would hang and be dropped later, when the button is
+/// pressed again.
+pub fn cancel_drag() {
+    unsafe {
+        // VK_ESCAPE, KEYEVENTF_KEYUP
+        winapi::um::winuser::keybd_event(0x1B, 0, 0, 0);
+        winapi::um::winuser::keybd_event(0x1B, 0, 2, 0);
+    }
+}
+
+/// The items which are selected in the folder window which has the focus, e.g.
+/// in Explorer, they are the items which the user drags out of a session.
+/// Returns the folder which is opened there and the paths of the selected
+/// items, an empty list when nothing is selected.
+pub fn focused_selected_items() -> Option<(String, Vec<String>)> {
+    use windows::core::Interface;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::System::Variant::VARIANT;
+    use windows::Win32::UI::Shell::{
+        FolderItems, IShellFolderViewDual, IShellWindows, IWebBrowser2, ShellWindows,
+    };
+
+    // The window which has the focus, the user drags from there.
+    let foreground = unsafe { winapi::um::winuser::GetForegroundWindow() as usize };
+
+    (|| -> Option<(String, Vec<String>)> {
+        unsafe {
+            let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).0 == 0;
+            let res = (|| -> Option<(String, Vec<String>)> {
+                let windows: IShellWindows =
+                    CoCreateInstance(&ShellWindows, None, CLSCTX_ALL).ok()?;
+                let count = windows.Count().ok()?;
+                for i in 0..count {
+                    let item = match windows.Item(&VARIANT::from(i)) {
+                        Ok(item) => item,
+                        Err(_) => continue,
+                    };
+                    let browser: IWebBrowser2 = match item.cast() {
+                        Ok(browser) => browser,
+                        Err(_) => continue,
+                    };
+                    let focused = match browser.HWND() {
+                        Ok(hwnd) => hwnd.0 as usize as u32 == foreground as u32,
+                        Err(_) => false,
+                    };
+                    if !focused {
+                        continue;
+                    }
+                    let dir = match browser.LocationURL() {
+                        Ok(url) => match dir_from_url(&format!("{}", url)) {
+                            Some(dir) => dir,
+                            None => continue,
+                        },
+                        Err(_) => continue,
+                    };
+                    // The view of the folder window which holds the selection.
+                    let view: IShellFolderViewDual = match browser.Document() {
+                        Ok(document) => match document.cast() {
+                            Ok(view) => view,
+                            Err(_) => continue,
+                        },
+                        Err(_) => continue,
+                    };
+                    let items: FolderItems = match view.SelectedItems() {
+                        Ok(items) => items,
+                        Err(_) => continue,
+                    };
+                    let count = match items.Count() {
+                        Ok(count) => count,
+                        Err(_) => continue,
+                    };
+                    let mut selected = Vec::new();
+                    for j in 0..count {
+                        let item = match items.Item(&VARIANT::from(j)) {
+                            Ok(item) => item,
+                            Err(_) => continue,
+                        };
+                        if let Ok(path) = item.Path() {
+                            let path = format!("{}", path);
+                            if !path.is_empty() {
+                                selected.push(path);
+                            }
+                        }
+                    }
+                    return Some((dir, selected));
+                }
+                None
+            })();
+            if initialized {
+                CoUninitialize();
+            }
+            res
+        }
+    })()
+}
