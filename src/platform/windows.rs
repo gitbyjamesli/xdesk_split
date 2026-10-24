@@ -2412,6 +2412,27 @@ pub fn get_win_key_state() -> bool {
     unsafe { is_win_down() == TRUE }
 }
 
+/// Stop the background processes and the service, so that nothing is left over
+/// after the program is quit, see `main_stop_service`. The service is stopped
+/// but stays installed, so that it is started again on the next boot.
+pub fn stop_service_and_quit() {
+    log::info!("Stopping the service...");
+    let filter = format!(" /FI \"PID ne {}\"", get_current_pid());
+    let cmds = format!(
+        "
+    chcp 65001
+    sc stop {app_name}
+    taskkill /F /IM {broker_exe}
+    taskkill /F /IM {app_name}.exe{filter}
+    ",
+        app_name = crate::get_app_name(),
+        broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
+    );
+    if let Err(err) = run_cmds(cmds, false, "stop-service") {
+        log::debug!("{err}");
+    }
+}
+
 pub fn quit_gui() {
     std::process::exit(0);
     // unsafe { PostQuitMessage(0) }; // some how not work

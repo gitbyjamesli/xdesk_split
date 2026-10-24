@@ -2069,6 +2069,12 @@ pub fn main_stop_service() {
         config::Config::set_option("stop-service".into(), "Y".into());
         crate::rendezvous_mediator::RendezvousMediator::restart();
     }
+    #[cfg(target_os = "windows")]
+    {
+        // Stop the background processes and the service, otherwise they are
+        // left behind when the program is quit, see the task manager.
+        crate::platform::stop_service_and_quit();
+    }
 }
 
 pub fn main_start_service() {

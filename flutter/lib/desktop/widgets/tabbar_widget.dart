@@ -509,6 +509,9 @@ class _DesktopTabState extends State<DesktopTab>
         if (!await mainWindowCloseConfirmDialog()) {
           return;
         }
+        // Stop the background processes and the service, so that nothing is
+        // left behind after the program is quit.
+        await bind.mainStopService();
         bind.mainOnMainWindowClose();
         exit(0);
         return;
