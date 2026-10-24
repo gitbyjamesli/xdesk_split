@@ -664,9 +664,9 @@ class _RemotePageState extends State<RemotePage>
           kWindowEventDownloadFilesToLocal,
           jsonEncode({
             'id': widget.id,
-            'password': widget.params['password'],
-            'isSharedPassword': widget.params['isSharedPassword'],
-            'forceRelay': widget.params['forceRelay'],
+            'password': widget.password,
+            'isSharedPassword': widget.isSharedPassword,
+            'forceRelay': widget.forceRelay,
             'files': files,
             'toLocalDir': dir,
           }));
