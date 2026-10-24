@@ -4616,12 +4616,14 @@ impl Connection {
                 .unwrap_or_default();
             match std::fs::metadata(&path) {
                 Ok(meta) if meta.is_dir() => {
-                    entry.entry_type =
-                        EnumOrUnknown::new(hbb_common::message_proto::FileType::Dir);
+                    entry.entry_type = hbb_common::protobuf::EnumOrUnknown::new(
+                        hbb_common::message_proto::FileType::Dir,
+                    );
                 }
                 Ok(meta) => {
-                    entry.entry_type =
-                        EnumOrUnknown::new(hbb_common::message_proto::FileType::File);
+                    entry.entry_type = hbb_common::protobuf::EnumOrUnknown::new(
+                        hbb_common::message_proto::FileType::File,
+                    );
                     entry.size = meta.len();
                 }
                 Err(_) => continue,
